@@ -42,6 +42,7 @@ MENU_HOST gMenuHost;
 BOOLEAN   gMenuHostSet;
 BOOLEAN   gFastbootUp;
 BOOLEAN   gUsbLive;
+BOOLEAN   gEarlyFastboot;
 
 VOID
 MenuLog (
@@ -610,6 +611,7 @@ HoldLogUntilKey (IN CONST MENU_HOST_STATE *State)
     Count = Events.Count;
     VecFree (&Events);
     if (Count) {
+      InputKeysClose (&Keys);
       return;
     }
     gBS->Stall (10000);
@@ -790,7 +792,8 @@ RunBoot (
   if (ModelListRequested (State)) {
     return ModelListAfterRestart (Host);
   }
-  if (State->Entry & OPENABL_MENU_ENTRY_FASTBOOT) {
+  if ((State->Entry & OPENABL_MENU_ENTRY_FASTBOOT) || gEarlyFastboot ||
+      InputVolumeDownHeld ()) {
     MenuLog ("fastboot was asked for");
     return FastbootPath (Host, MENU_START_RESULT_NONE);
   }
@@ -887,9 +890,14 @@ Early (IN CONST MENU_HOST *Host)
     AblConsoleShow ();
   }
   BufferFree (&Mode);
-  Chip    = QuirksChipId ();
-  Patched = QuirksSdccUhs (Chip, gMenuEfiLog);
-  MenuLog ("early: %u SdccDxe site(s) patched", Patched);
+  Chip = QuirksChipId ();
+  if (InputVolumeDownHeld ()) {
+    gEarlyFastboot = TRUE;
+    MenuLog ("early: Volume Down held, skipping SDCC quirks for Fastboot");
+  } else {
+    Patched = QuirksSdccUhs (Chip, gMenuEfiLog);
+    MenuLog ("early: %u SdccDxe site(s) patched", Patched);
+  }
   if (!Resident ()) {
     MenuLog (
       "built as an application, so it can't stay loaded: no storage protocol"
@@ -910,8 +918,10 @@ Early (IN CONST MENU_HOST *Host)
       );
     }
   }
-  // Run XBL's SD card detection once more as the ABL goes on.
-  QuirksSignalSdDetect ();
+  if (!gEarlyFastboot) {
+    // Run XBL's SD card detection once more as the ABL goes on.
+    QuirksSignalSdDetect ();
+  }
   return Status;
 }
 

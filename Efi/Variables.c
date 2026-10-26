@@ -303,13 +303,11 @@ VariablesMoveOutOfDevinfo (IN LOG_SINK Log)
   // Where devinfo stores the settings, write the copy again now that the
   // old values made room. A record an older ABL filled (up to seven of its
   // eight values) had no room for it at the flush above.
-  if (!QcomHasVariableServices ()) {
-    Status = VariablesPersistToDevinfo ();
-    if (EFI_ERROR (Status)) {
-      LogPrint (
-        Log, "settings: the settings into devinfo: %s", STATUS_TEXT (Status)
-      );
-    }
+  Status = VariablesPersistToDevinfo ();
+  if (EFI_ERROR (Status)) {
+    LogPrint (
+      Log, "settings: the settings into devinfo: %s", STATUS_TEXT (Status)
+    );
   }
 #endif
   LogPrint (
@@ -348,6 +346,7 @@ VariablesPersistToDevinfo (VOID)
 {
   SETTINGS_STORE_VALUE Entries[SETTINGS_STORE_ENTRIES];
   CONST CHAR8         *Skipped[SETTINGS_STORE_SKIPPED_MAX];
+  CONST CHAR8         *LegacyBootMode = "BootMode";
   UINTN                SkippedCount;
   OABL_BUFFER          Raw;
   BOOLEAN              Fits = TRUE;
@@ -356,6 +355,7 @@ VariablesPersistToDevinfo (VOID)
   if (!ReadDevinfo (&Raw)) {
     return EFI_UNSUPPORTED;
   }
+  DevInfoClearValues (Raw.Data, Raw.Len, &LegacyBootMode, 1);
   SettingsStorePack (StoredGet, NULL, Entries, Skipped, &SkippedCount);
   for (UINTN Index = 0; Index < SETTINGS_STORE_ENTRIES; Index++) {
     CONST SETTINGS_STORE_VALUE *Entry = &Entries[Index];
@@ -368,6 +368,10 @@ VariablesPersistToDevinfo (VOID)
       );
     }
   }
+  Fits &= DevInfoSetValue (
+    Raw.Data, Raw.Len, "HolodorAblVer", (CONST UINT8 *)MENU_VERSION,
+    AsciiStrLen (MENU_VERSION) + 1
+  );
   if (!Fits) {
     Status = EFI_OUT_OF_RESOURCES;
   } else if (!QcomWriteDeviceState (Raw.Data, Raw.Len, &Status)) {
@@ -385,15 +389,12 @@ VariablesRestoreFromDevinfo (IN LOG_SINK Log)
   SETTINGS_VAR Vars[SETTINGS_STORE_VARS];
   OABL_BUFFER  Raw;
   DEVINFO      Parsed;
+  OABL_BYTES   LegacyBm;
   UINT64       Set = 0;
 
-  if (QcomHasVariableServices ()) {
-    return;
-  }
   if (!ReadDevinfo (&Raw)) {
     LogPrint (
-      Log, "settings: no variable services, and devinfo unreadable: the "
-           "settings are this boot's"
+      Log, "settings: devinfo unreadable: the settings are this boot's"
     );
     return;
   }
@@ -401,10 +402,6 @@ VariablesRestoreFromDevinfo (IN LOG_SINK Log)
     goto Done;
   }
   if (!SettingsStoreUnpack (DevinfoValueOf, &Parsed, Vars)) {
-    LogPrint (
-      Log,
-      "settings: no variable services: the settings will be kept in devinfo"
-    );
     goto Done;
   }
   for (UINTN Index = 0; Index < SETTINGS_STORE_VARS; Index++) {
@@ -414,8 +411,14 @@ VariablesRestoreFromDevinfo (IN LOG_SINK Log)
       Set++;
     }
   }
+  if (DevInfoValue (&Parsed, "BootMode", &LegacyBm) && LegacyBm.Len >= 1 &&
+      LegacyBm.Ptr[0] <= 1) {
+    UINT8 Bm = LegacyBm.Ptr[0];
+    VariablesPut (SETTINGS_KEY_BOOT_MODE, &Bm, 1);
+    (VOID)VariablesPersistToDevinfo ();
+  }
   LogPrint (
-    Log, "settings: no variable services: %llu setting(s) from devinfo", Set
+    Log, "settings: %llu setting(s) synced from devinfo", Set
   );
 Done:
   BufferFree (&Raw);

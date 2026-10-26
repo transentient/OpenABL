@@ -3,6 +3,16 @@
   <img alt="OpenABL" src="Docs/logo-light.png" width="320">
 </picture>
 
+> **Holodor Fork of [OpenHandheldCollective/OpenABL](https://github.com/OpenHandheldCollective/OpenABL) (GPL-3.0-or-later)**
+>
+> This repository contains the source code for the modified `OpenABL v1.1` builds shipped with [Holodor](https://github.com/transentient/holodor). Changes over upstream `v1.1` (`2026-10`):
+> - **Gamepad Navigation in the Boot Menu (`Efi/Input.c`, `Efi/Input.h`, `Menu/Menu.c`, `Menu/Main.c`)**: Non-blocking QUPv3 GENI SE UART + TLMM GPIO driver and `A5 D3 5A 3D` MCU frame parser for built-in handheld controllers on `SM8250` (Retroid Pocket 5 / Flip 2 / Mini), `SM8550` (Retroid Pocket 6 / RP Nova, AYN Odin 2 family), and `SM8750` (AYN Odin 3). Supports D-Pad, Left Analog Stick, `A` (Select), and `B` (Back), and powers down the MCU on menu exit.
+> - **Retroid Pocket Nova Support (`Efi/Models.c`, `Menu/Menu.c`)**: Adds `mdss_dsi_il97680a_fhd_video` panel identification (`1080×1920`, `Retroid Pocket Nova` / `qcs8550-retroidpocket-rpnova.dtb`).
+> - **Fastboot Escape Hatch & SD Card Recovery (`Menu/Main.c`, `Efi/Input.c`, `Efi/Quirks.c`)**: Hold Volume Down on boot to enter Fastboot directly; direct PMIC PON GPIO polling fallback; safe SD card rail power-cycle across warm reboots.
+> - **Dual `devinfo` Settings Sync (`Efi/Qcom.c`, `Efi/Variables.c`, `build.sh`)**: Enables `devinfo-settings` across `SM8250`/`SM8550`/`SM8750` and synchronizes `OablSettings` (`devinfo+0x990`) with the legacy `ROCKNIX\0\0` `BootMode` offset (`+56`) for compatibility with reboot-to-Android / reboot-to-Linux utilities.
+> - **Single-DTB Auto-Selection (`Efi/BootImage.c`, `Efi/Models.c`)**: Automatically selects the appended DTB when a boot image carries a single board DTB.
+> - **Holodor Wordmark & Native Host Build (`View/View.c`, `Menu/BootSplash.c`, `Scripts/abl.sh`, `build.sh`)**: Marks modified builds as `Holodor` / `HolodorABL` per GPLv3 §5(a) and allows building directly on a Linux host when Docker is not running.
+
 A graphical boot menu and standard Linux boot for Qualcomm handhelds,
 built into Qualcomm's Android bootloader (ABL). OpenABL is Qualcomm's ABL
 with one patch and a few added files (`Abl/`). It carries the menu program

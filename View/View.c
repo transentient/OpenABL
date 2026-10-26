@@ -24,6 +24,11 @@
 #include "View/Text.h"
 #include "microui.h"
 
+#if __has_include("View/HolodorWordmarkArt.h")
+#include "View/HolodorWordmarkArt.h"
+#define HAVE_HOLODOR_WORDMARK_ART 1
+#endif
+
 extern CONST UINT8 gOablAssetFontCjk[];
 extern CONST UINTN gOablAssetFontCjkSize;
 
@@ -763,16 +768,21 @@ RowItem (
 
 // Header and footer
 
-// Returns the width of the "OpenABL" wordmark at Size.
+// Returns the width of the "Holodor" wordmark at Size.
 STATIC float
 WordmarkWidth (IN float Size)
 {
-  return Measure ("Open", Size, FONT_WEIGHT_MEDIUM) +
-         Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
+#ifdef HAVE_HOLODOR_WORDMARK_ART
+  INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
+  return (float)(HolodorWordmark_W * Scale);
+#else
+  return Measure ("Holo", Size, FONT_WEIGHT_MEDIUM) +
+         Measure ("dor", Size, FONT_WEIGHT_MEDIUM);
+#endif
 }
 
-// Draws the "OpenABL" wordmark from X, its capitals centred on Cy: "Open"
-// in the text colour, "ABL" in the brand colour.
+// Draws the "Holodor" wordmark from X, its capitals centred on Cy: "Holo"
+// in the text colour, "dor" in the brand colour.
 STATIC VOID
 Wordmark (
   IN float X,
@@ -780,18 +790,50 @@ Wordmark (
   IN float Size
 )
 {
-  float OpenW = Measure ("Open", Size, FONT_WEIGHT_MEDIUM);
-  float AblW  = Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
+#ifdef HAVE_HOLODOR_WORDMARK_ART
+  INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
+  INT32 X0    = (INT32)RoundF (X);
+  INT32 Y0    = (INT32)RoundF (Cy) - (HolodorWordmark_H * Scale) / 2;
+  INT32 Px    = 0;
+  INT32 Py    = 0;
+  for (UINTN Off = 0; Off + 1 < HolodorWordmark_RLE_SIZE; Off += 2) {
+    UINT32 Rem   = gHolodorWordmarkRle[Off];
+    UINT32 Argb  = gHolodorWordmarkPalette[gHolodorWordmarkRle[Off + 1]];
+    UINT32 Rgb   = Argb & 0xFFFFFFU;
+    UINT8  Alpha = (UINT8)(Argb >> 24);
+    while (Rem > 0 && Py < HolodorWordmark_H) {
+      UINT32 Span = (UINT32)(HolodorWordmark_W - Px);
+      if (Span > Rem) {
+        Span = Rem;
+      }
+      if (Alpha >= 128) {
+        Fill (
+          Rect (X0 + Px * Scale, Y0 + Py * Scale, (INT32)Span * Scale, Scale),
+          Rgb, Alpha
+        );
+      }
+      Px += (INT32)Span;
+      if (Px >= HolodorWordmark_W) {
+        Px = 0;
+        Py++;
+      }
+      Rem -= Span;
+    }
+  }
+#else
+  float OpenW = Measure ("Holo", Size, FONT_WEIGHT_MEDIUM);
+  float AblW  = Measure ("dor", Size, FONT_WEIGHT_MEDIUM);
   float H     = ToPx (Size) * 2;
 
   TextIn (
-    Rectf (X, Cy - H / 2, OpenW + ToPx (2), H), "Open", Size,
+    Rectf (X, Cy - H / 2, OpenW + ToPx (2), H), "Holo", Size,
     FONT_WEIGHT_MEDIUM, THEME_TEXT, ALIGN_LEFT
   );
   TextIn (
-    Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "ABL", Size,
+    Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "dor", Size,
     FONT_WEIGHT_MEDIUM, THEME_BRAND, ALIGN_LEFT
   );
+#endif
 }
 
 // The wordmark and the version in a chip at the right.

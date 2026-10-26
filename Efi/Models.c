@@ -70,11 +70,15 @@ BlobFor (
     if (!DtInspect (Blob, Dtbs.Items[Index].Size, &Info)) {
       continue;
     }
-    if (AsciiStrEq (Info.Model, Model)) {
+    if (Model && *Model && AsciiStrEq (Info.Model, Model)) {
       *Out  = Dtbs.Items[Index];
       Found = TRUE;
     }
     DtInfoFree (&Info);
+  }
+  if (!Found && Dtbs.Count == 1) {
+    *Out  = Dtbs.Items[0];
+    Found = TRUE;
   }
   VecFree (&Dtbs);
   return Found;

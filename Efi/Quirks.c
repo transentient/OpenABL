@@ -290,6 +290,13 @@ QuirksSignalSdDetect (VOID)
   SignalGroup (&mDetectSdCard);
 }
 
+// SdccDxe: power-cycling the SD card rails so a card left in 1.8 V signaling
+// mode by Android resets back to 3.3 V before SdccDxe sends ACMD41 with
+// S18R=0. On RPMh/VRM platforms (SM8550/QCS8550), Android's HLOS DRV0 vote
+// stays latched in VRM across a warm reboot, so MAX(DRV0, DRV2) prevents
+// EFI_NPA_PROTOCOL (DRV2) from turning ldob9 off; EFI_QCOM_PMIC_VREG_PROTOCOL
+// writes directly over SPMI to LDO_EN_CTL and LDO_VSET to force a true power
+// cycle and restore 2.952 V IO signaling on ldob8.
 // SdccDxe: the 1.8 V request
 
 // The movk that sets S18R in the ACMD41 argument and what follows it, in
@@ -308,15 +315,15 @@ STATIC CONST UINT8 mAcmd41[2][24] = {
 };
 STATIC CONST UINT8 mAcmd41Mask[2][24] = {
   {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1},
-  {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1},
 };
 #define MOVK_AT         4
 #define MOVK_S18R_SET   0x72a83ff5u
 #define MOVK_S18R_CLEAR 0x72a81ff5u
 // Also sets XPC (OCR bit 28, SDXC power control).
 #define MOVK_XPC_S18R_CLEAR 0x72aa1ff5u
-// SM8650 and SM8750 chip ids, whose cards get XPC.
-STATIC CONST UINT32 mXpcChips[] = {682, 639, 706};
+// SM8250, SM8550/QCS8550, SM8650 and SM8750 chip ids, whose cards get XPC.
+STATIC CONST UINT32 mXpcChips[] = {356, 519, 536, 603, 682, 639, 706};
 #define MAX_SITES 16
 
 STATIC BOOLEAN

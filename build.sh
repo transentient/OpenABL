@@ -34,17 +34,17 @@ usage() {
 # doesn't), whether to bundle edk2's USB host stack (where XBL has none),
 # extra ABL make parameters, and extra program features.
 chipset() {
-  SIGN=-v7 PVMFW=true KERNEL_PROTOCOL=1 BUNDLED_USB=0 ABL_EXTRA="" OWN="" OWN_FULL=""
+  SIGN=-v7 PVMFW=true KERNEL_PROTOCOL=1 BUNDLED_USB=0 ABL_EXTRA="" OWN="devinfo-settings" OWN_FULL=""
   case $1 in
     sdm845) SIGN=-v5 PVMFW=false KERNEL_PROTOCOL=0 OWN=devinfo-settings,loader-quirks ;;
-    sm4450) OWN=sdcc-sm4450 ;;
-    sm6115) SIGN=-v6 PVMFW=false BUNDLED_USB=1 ABL_EXTRA=TARGET_SOC_SM6115=1 OWN=loader-quirks ;;
-    sm6450) OWN=sdcc-sm6450 ;;
-    sm7675) OWN=sdcc-sm7675 ;;
-    sm8550) ;;
-    sm8650) OWN=park-display ;;
-    sm8750) OWN=park-display OWN_FULL=sysfont ;;
-    sm8250) SIGN=-v6 PVMFW=false ;;
+    sm4450) OWN=devinfo-settings,sdcc-sm4450 ;;
+    sm6115) SIGN=-v6 PVMFW=false BUNDLED_USB=1 ABL_EXTRA=TARGET_SOC_SM6115=1 OWN=devinfo-settings,loader-quirks ;;
+    sm6450) OWN=devinfo-settings,sdcc-sm6450 ;;
+    sm7675) OWN=devinfo-settings,sdcc-sm7675 ;;
+    sm8550) OWN=devinfo-settings ;;
+    sm8650) OWN=devinfo-settings,park-display ;;
+    sm8750) OWN=devinfo-settings,park-display OWN_FULL=sysfont ;;
+    sm8250) SIGN=-v6 PVMFW=false OWN=devinfo-settings ;;
     *) echo "unknown chipset $1" >&2; usage ;;
   esac
 }
@@ -65,16 +65,20 @@ done
 for soc in "${ASKED[@]}"; do chipset "$soc"; done
 
 command -v git > /dev/null || { echo "git is needed" >&2; exit 1; }
-docker info > /dev/null 2>&1 || { echo "Docker isn't running" >&2; exit 1; }
+USE_DOCKER=0
+if docker info > /dev/null 2>&1; then
+  USE_DOCKER=1
+fi
 
 Scripts/fetch.sh
 mkdir -p build/out
 
-# Build image: the tianocore image plus the packages the build needs. Its
-# tag is a hash of its inputs, so it is only rebuilt when they change.
-mkdir -p build/image
-cp build/edk2/pip-requirements.txt build/image/ 2> /dev/null || : > build/image/pip-requirements.txt
-cat > build/image/Dockerfile << EOF
+if [ "$USE_DOCKER" = 1 ]; then
+  # Build image: the tianocore image plus the packages the build needs. Its
+  # tag is a hash of its inputs, so it is only rebuilt when they change.
+  mkdir -p build/image
+  cp build/edk2/pip-requirements.txt build/image/ 2> /dev/null || : > build/image/pip-requirements.txt
+  cat > build/image/Dockerfile << EOF
 FROM $IMAGE
 RUN dnf --assumeyes -q install glibc-devel.i686 python3-setuptools && dnf clean all
 RUN pip install -q fonttools==4.67.0
@@ -82,24 +86,35 @@ COPY pip-requirements.txt /tmp/
 RUN pip install -q -r /tmp/pip-requirements.txt || true
 RUN git config --global --add safe.directory '*'
 EOF
-TAG=openabl-build:$(cat build/image/Dockerfile build/image/pip-requirements.txt | cksum | cut -d' ' -f1)
-if ! docker image inspect "$TAG" > /dev/null 2>&1; then
-  echo "build: making the build image $TAG (once)"
-  docker build -q --platform linux/amd64 -t "$TAG" build/image > /dev/null
+  TAG=openabl-build:$(cat build/image/Dockerfile build/image/pip-requirements.txt | cksum | cut -d' ' -f1)
+  if ! docker image inspect "$TAG" > /dev/null 2>&1; then
+    echo "build: making the build image $TAG (once)"
+    docker build -q --platform linux/amd64 -t "$TAG" build/image > /dev/null
+  fi
+  OPENABL_ROOT=/openabl
+  QTESTSIGN_ROOT=/qtestsign
+  OUT_ROOT=/out
+else
+  TAG="native-host"
+  OPENABL_ROOT="$PWD"
+  QTESTSIGN_ROOT="$PWD/build/qtestsign"
+  OUT_ROOT="$PWD/build/out"
 fi
 
-# Script for the container: build the program, then the ABL, per chipset.
+# Script for the container or host: build the program, then the ABL, per chipset.
 COMMON=(
-  "PREBUILT_HOST_TOOLS=BUILD_CC=clang BUILD_CXX=clang++ LDPATH=-fuse-ld=lld BUILD_AR=llvm-ar"
+  "PREBUILT_HOST_TOOLS=BUILD_CC=clang BUILD_CXX=clang++ LDPATH=-fuse-ld=lld BUILD_AR=llvm-ar EXTRA_OPTFLAGS=-Wno-unused-but-set-global"
   QSPA_BOOTCONFIG_ENABLE=0 AB_RETRYCOUNT_DISABLE=0 VERIFIED_BOOT_ENABLED=1
   USER_BUILD_VARIANT=1 DISABLE_PARALLEL_DOWNLOAD_FLASH=0 TARGET_ARCHITECTURE=arm64
-  CLANG_PREFIX=aarch64-linux-gnu- BOARD_BOOTLOADER_PRODUCT_NAME=OpenABL
+  CLANG_PREFIX=aarch64-linux-gnu- BOARD_BOOTLOADER_PRODUCT_NAME=HolodorABL
   BOARD_BOOTLOADER_PRODUCT_VERSION="$VERSION" REMOVE_CARVEOUT_REGION=0 ABL_USB_HOST=1
   OPENABL_MENU=1
 )
 SCRIPT="exec 2>&1
 export ABL_CLEAN=$CLEAN
-. /openabl/Scripts/abl.sh
+export QTESTSIGN_DIR='$QTESTSIGN_ROOT'
+export OUT_DIR='$OUT_ROOT'
+. '$OPENABL_ROOT/Scripts/abl.sh'
 "
 for soc in "${ASKED[@]}"; do
   chipset "$soc"
@@ -113,8 +128,8 @@ for soc in "${ASKED[@]}"; do
   [ -n "$ABL_EXTRA" ] && params+=("$ABL_EXTRA")
   quoted=$(printf " '%s'" "${params[@]}")
   SCRIPT+="echo \"Building the program for $soc ($features)\"
-make -s -C /openabl FEATURES='$features' OBJ=build/obj-abl OUT=build/menu/$soc || { echo \"ERROR: the program didn't build for $soc.\"; exit 1; }
-build $soc /openabl/build/menu/$soc/openabl-menu.efi $SIGN$quoted || exit 1
+make -s -C '$OPENABL_ROOT' FEATURES='$features' OBJ=build/obj-abl OUT=build/menu/$soc || { echo \"ERROR: the program didn't build for $soc.\"; exit 1; }
+build $soc '$OPENABL_ROOT/build/menu/$soc/openabl-menu.efi' $SIGN$quoted || exit 1
 "
 done
 
@@ -141,28 +156,33 @@ LOG=build/abl-build.log
 : > "$LOG"
 STARTED=$(date +%s)
 echo "build: ${ASKED[*]} in $TAG (log: $LOG)"
-# Under emulation the edk2 build tool sometimes hangs with no output. Stop
-# the container and retry once; incremental builds pick up where it was.
 status=1
-for attempt in 1 2; do
-  name=openabl-build-$$-$attempt
+if [ "$USE_DOCKER" = 1 ]; then
+  for attempt in 1 2; do
+    name=openabl-build-$$-$attempt
+    rm -f build/.silent
+    watchdog "$name" &
+    dog=$!
+    set +e
+    docker run --rm --name "$name" --platform linux/amd64 \
+      -v "$PWD:/openabl" -v "$PWD/build/edk2:$WORKSPACE" \
+      -v "$PWD/build/qtestsign:/qtestsign:ro" -v "$PWD/build/out:/out" \
+      -w "$WORKSPACE" "$TAG" bash -lc "$SCRIPT" 2>&1 | tee -a "$LOG" | show
+    status=${PIPESTATUS[0]}
+    set -e
+    kill "$dog" 2> /dev/null || true
+    wait "$dog" 2> /dev/null || true
+    [ -f build/.silent ] || break
+    echo "build: no output for 10 minutes; the container was stopped"
+    status=1
+  done
   rm -f build/.silent
-  watchdog "$name" &
-  dog=$!
+else
   set +e
-  docker run --rm --name "$name" --platform linux/amd64 \
-    -v "$PWD:/openabl" -v "$PWD/build/edk2:$WORKSPACE" \
-    -v "$PWD/build/qtestsign:/qtestsign:ro" -v "$PWD/build/out:/out" \
-    -w "$WORKSPACE" "$TAG" bash -lc "$SCRIPT" 2>&1 | tee -a "$LOG" | show
+  (cd "$PWD/build/edk2" && bash -c "$SCRIPT") 2>&1 | tee -a "$LOG" | show
   status=${PIPESTATUS[0]}
   set -e
-  kill "$dog" 2> /dev/null || true
-  wait "$dog" 2> /dev/null || true
-  [ -f build/.silent ] || break
-  echo "build: no output for 10 minutes; the container was stopped"
-  status=1
-done
-rm -f build/.silent
+fi
 
 echo "build: $((($(date +%s) - STARTED) / 60)) minutes"
 for soc in "${ASKED[@]}"; do

@@ -292,16 +292,19 @@ QcomFlushVariables (OUT EFI_STATUS *Status)
 {
   VARIABLE_SERVICES *Services = Open (&mVariableServicesGuid);
 
-  if (!Services) {
+  if (Services) {
+    *Status = Services->FlushVariableNv (Services);
 #ifdef OABL_DEVINFO_SETTINGS
-    *Status = VariablesPersistToDevinfo ();
-    return TRUE;
-#else
-    return FALSE;
+    (VOID)VariablesPersistToDevinfo ();
 #endif
+    return TRUE;
   }
-  *Status = Services->FlushVariableNv (Services);
+#ifdef OABL_DEVINFO_SETTINGS
+  *Status = VariablesPersistToDevinfo ();
   return TRUE;
+#else
+  return FALSE;
+#endif
 }
 
 BOOLEAN

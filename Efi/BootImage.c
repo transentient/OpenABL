@@ -292,15 +292,20 @@ ModelDtb (
         )) {
       continue;
     }
-    if (AsciiStrEq (Info.Model, Model)) {
+    if (Model && *Model && AsciiStrEq (Info.Model, Model)) {
       Blob     = Dtbs + Found.Items[Index].Offset;
       BlobSize = Found.Items[Index].Size;
     }
     DtInfoFree (&Info);
   }
+  if (!Blob && Found.Count == 1) {
+    Blob     = Dtbs + Found.Items[0].Offset;
+    BlobSize = Found.Items[0].Size;
+  }
   VecFree (&Found);
   if (!Blob) {
-    return "no devicetree for the selected model in it";
+    return (!Model || !*Model) ? "no device model selected: it needs one for its devicetree"
+                               : "no devicetree for the selected model in it";
   }
   if (!UefiPaddedDtb (Blob, BlobSize, DTB_PAD, Out)) {
     return "its devicetree doesn't parse";
@@ -502,10 +507,6 @@ BootImageStart (
   CONST CHAR8 *Why;
   EFI_STATUS   Status;
 
-  if (!Model || !*Model) {
-    SAY (Log, "no device model selected: it needs one for its devicetree");
-    return BOOT_IMAGE_NOT_STARTED_NO_MODEL;
-  }
   Status = MenuHostAction (Host, OPENABL_MENU_ACTION_BOOT_IMAGE_VERIFY);
   if (Status != EFI_SUCCESS) {
     SAY (Log, "verified boot refused it (%s)", STATUS_STR (Status));
@@ -515,9 +516,13 @@ BootImageStart (
     return BOOT_IMAGE_NOT_STARTED_REFUSED;
   }
   // Once verified, the buffer is ours again.
-  Why = LayOut (Host, Found, Model, Log);
+  Why = LayOut (Host, Found, Model ? Model : "", Log);
   gBS->FreePool (Found->Buffer);
   SAY (Log, "%s", Why);
+  if ((!Model || !*Model) &&
+      AsciiStrEq (Why, "no device model selected: it needs one for its devicetree")) {
+    return BOOT_IMAGE_NOT_STARTED_NO_MODEL;
+  }
   return BOOT_IMAGE_NOT_STARTED_FAILED;
 }
 
@@ -529,11 +534,13 @@ BootImageStartVerified (
   IN LOG_SINK                Log
 )
 {
-  if (!Model || !*Model) {
-    SAY (Log, "no device model selected: it needs one for its devicetree");
+  CONST CHAR8 *Why = LayOut (Host, Found, Model ? Model : "", Log);
+
+  SAY (Log, "%s", Why);
+  if ((!Model || !*Model) &&
+      AsciiStrEq (Why, "no device model selected: it needs one for its devicetree")) {
     return EFI_NOT_READY;
   }
-  SAY (Log, "%s", LayOut (Host, Found, Model, Log));
   return EFI_LOAD_ERROR;
 }
 

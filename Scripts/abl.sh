@@ -26,6 +26,20 @@ build() {
   rm -f unsigned_abl.elf
   # Use Conf from BaseTools' templates, not the Conf in Qualcomm's tree
   # (which links with lld through FUSE_LD).
+  if ! grep -q "Wno-enum-compare" BaseTools/Conf/tools_def.template 2>/dev/null; then
+    sed -i 's/-Wno-unused-but-set-variable/-Wno-unused-but-set-variable -Wno-unused-but-set-global -Wno-enum-compare -Wno-error/g' BaseTools/Conf/tools_def.template
+  fi
+  sed -i "s/RespDict\[Key\] = Value.replace('\\\\\\\\', '\/')/RespDict[Key] = Value/g" BaseTools/Source/Python/AutoGen/GenMake.py
+  sed -i 's/gCommandMaxLength = 4096/gCommandMaxLength = 65536/g' BaseTools/Source/Python/Common/GlobalData.py
+  mkdir -p BaseTools/Source/Python/distutils
+  cat > BaseTools/Source/Python/distutils/__init__.py << 'PYEOF'
+PYEOF
+  cat > BaseTools/Source/Python/distutils/util.py << 'PYEOF'
+import shlex
+def split_quoted(s):
+    return shlex.split(s)
+PYEOF
+  export PYTHONPATH="$PWD/BaseTools/Source/Python:${PYTHONPATH:-}"
   for c in build_rule tools_def target; do
     cmp -s "BaseTools/Conf/$c.template" "Conf/$c.txt" || { . edksetup.sh --reconfig; break; }
   done
@@ -42,7 +56,9 @@ build() {
     make all "$@" || { echo "ERROR: Build failed for $soc."; return 1; }
   fi
   out=abl_signed-$(echo "$soc" | tr a-z A-Z).elf
-  python3 /qtestsign/qtestsign.py "$sign" -o "/out/$out" abl unsigned_abl.elf || { echo "ERROR: Signing failed for $soc."; return 1; }
-  (cd /out && sha256sum "$out" > "$out.sha256")
+  qtestsign_dir="${QTESTSIGN_DIR:-/qtestsign}"
+  out_dir="${OUT_DIR:-/out}"
+  python3 "$qtestsign_dir/qtestsign.py" "$sign" -o "$out_dir/$out" abl unsigned_abl.elf || { echo "ERROR: Signing failed for $soc."; return 1; }
+  (cd "$out_dir" && sha256sum "$out" > "$out.sha256")
   echo "SUCCESS: $out"
 }
