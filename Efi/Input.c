@@ -553,6 +553,9 @@ PadUpdateStatus (
 )
 {
   UINT16 Btn;
+  INT16  Lx    = 0;
+  INT16  Rx    = 0;
+  INT16  BestX = 0;
   INT16  Ly    = 0;
   INT16  Ry    = 0;
   INT16  BestY = 0;
@@ -562,8 +565,11 @@ PadUpdateStatus (
   }
   Btn = (UINT16)Frame[8] | ((UINT16)Frame[9] << 8);
   if (PayloadLen >= 14) {
+    Lx    = (INT16)((UINT16)Frame[14] | ((UINT16)Frame[15] << 8));
     Ly    = -(INT16)((UINT16)Frame[16] | ((UINT16)Frame[17] << 8));
+    Rx    = (INT16)((UINT16)Frame[18] | ((UINT16)Frame[19] << 8));
     Ry    = -(INT16)((UINT16)Frame[20] | ((UINT16)Frame[21] << 8));
+    BestX = (Lx < -250 || Lx > 250) ? Lx : Rx;
     BestY = (Ly < -250 || Ly > 250) ? Ly : Ry;
   }
 
@@ -583,20 +589,38 @@ PadUpdateStatus (
     Keys->PadStickDown = TRUE;
   }
 
+  if (Keys->PadStickLeft) {
+    if (BestX > -250) {
+      Keys->PadStickLeft = FALSE;
+    }
+  } else if (BestX < -450) {
+    Keys->PadStickLeft = TRUE;
+  }
+
+  if (Keys->PadStickRight) {
+    if (BestX < 250) {
+      Keys->PadStickRight = FALSE;
+    }
+  } else if (BestX > 450) {
+    Keys->PadStickRight = TRUE;
+  }
+
   // PadHeldAtStart is unused here; store current held state in PadHeldAtStart
   // slots as live state for PollGamepad:
   // [0] = INPUT_UP     (D-Pad Up BIT(0) or Analog Stick Up)
   // [1] = INPUT_DOWN   (D-Pad Down BIT(1) or Analog Stick Down)
-  // [2] = INPUT_SELECT (BTN_SOUTH BIT(7), BTN_EAST BIT(6), BTN_START BIT(11),
-  //                     or D-Pad Right BIT(3))
-  // [3] = INPUT_BACK   (BTN_WEST BIT(5), BTN_NORTH BIT(4), BTN_SELECT BIT(10),
-  //                     BTN_TL BIT(8), or D-Pad Left BIT(2))
+  // [2] = INPUT_LEFT   (D-Pad Left BIT(2) or Analog Stick Left)
+  // [3] = INPUT_RIGHT  (D-Pad Right BIT(3) or Analog Stick Right)
+  // [4] = INPUT_SELECT (BTN_SOUTH/East 'A' BIT(7) or BTN_START BIT(11))
+  // [5] = INPUT_BACK   (BTN_EAST/South 'B' BIT(6), BTN_WEST 'Y' BIT(5),
+  //                     BTN_SELECT BIT(10), or BTN_TL BIT(8))
   Keys->PadHeldAtStart[0] = ((Btn & (1U << 0)) != 0) || Keys->PadStickUp;
   Keys->PadHeldAtStart[1] = ((Btn & (1U << 1)) != 0) || Keys->PadStickDown;
-  Keys->PadHeldAtStart[2] =
-    (Btn & ((1U << 7) | (1U << 6) | (1U << 11) | (1U << 3))) != 0;
-  Keys->PadHeldAtStart[3] =
-    (Btn & ((1U << 5) | (1U << 4) | (1U << 10) | (1U << 8) | (1U << 2))) != 0;
+  Keys->PadHeldAtStart[2] = ((Btn & (1U << 2)) != 0) || Keys->PadStickLeft;
+  Keys->PadHeldAtStart[3] = ((Btn & (1U << 3)) != 0) || Keys->PadStickRight;
+  Keys->PadHeldAtStart[4] = (Btn & ((1U << 7) | (1U << 11))) != 0;
+  Keys->PadHeldAtStart[5] =
+    (Btn & ((1U << 6) | (1U << 5) | (1U << 10) | (1U << 8))) != 0;
 }
 
 STATIC VOID
@@ -647,7 +671,7 @@ STATIC VOID
 PollGamepad (
   IN OUT INPUT_KEYS *Keys,
   IN UINT64          Now,
-  OUT BOOLEAN        Held[4]
+  OUT BOOLEAN        Held[6]
 )
 {
   STATIC CONST UINT8 Cmd0701[]  = {0x07, 0x01};
@@ -657,7 +681,7 @@ PollGamepad (
                                    0x28, 0x00, 0x00, 0x00, 0x07};
   BOOLEAN            SawVersion = FALSE;
 
-  for (UINTN Index = 0; Index < 4; Index++) {
+  for (UINTN Index = 0; Index < 6; Index++) {
     Held[Index] = FALSE;
   }
 
@@ -772,7 +796,7 @@ PollGamepad (
   }
 
   if (Keys->PadActive) {
-    for (UINTN Index = 0; Index < 4; Index++) {
+    for (UINTN Index = 0; Index < 6; Index++) {
       Held[Index] = Keys->PadHeldAtStart[Index];
     }
   }
@@ -816,6 +840,12 @@ ReadKey (OUT INPUT *Out)
       case SCAN_DOWN:
       case SCAN_VOLUME_DOWN:
         *Out = INPUT_DOWN;
+        return TRUE;
+      case SCAN_LEFT:
+        *Out = INPUT_LEFT;
+        return TRUE;
+      case SCAN_RIGHT:
+        *Out = INPUT_RIGHT;
         return TRUE;
       case SCAN_ESC:
         *Out = INPUT_BACK;
@@ -873,12 +903,12 @@ InputKeysPoll (
 )
 {
   STATIC CONST INPUT HwMap[3]  = {INPUT_UP, INPUT_DOWN, INPUT_SELECT};
-  STATIC CONST INPUT PadMap[4] = {INPUT_UP, INPUT_DOWN, INPUT_SELECT,
-                                  INPUT_BACK};
+  STATIC CONST INPUT PadMap[6] = {INPUT_UP,    INPUT_DOWN,   INPUT_LEFT,
+                                  INPUT_RIGHT, INPUT_SELECT, INPUT_BACK};
   INPUT              Key;
   INPUT              Decoded;
   BOOLEAN            Hw[3];
-  BOOLEAN            Pad[4];
+  BOOLEAN            Pad[6];
   BOOLEAN            Any = FALSE;
 
   while (ReadKey (&Key)) {
@@ -910,7 +940,7 @@ InputKeysPoll (
     }
   }
   PollGamepad (Keys, Now, Pad);
-  for (UINTN Index = 0; Index < 4; Index++) {
+  for (UINTN Index = 0; Index < 6; Index++) {
     if (Keys->PadPrevHeld[Index] && !Pad[Index] &&
         Keys->Decoder.Held && Keys->Decoder.Key == PadMap[Index]) {
       Keys->Decoder.Held = FALSE;

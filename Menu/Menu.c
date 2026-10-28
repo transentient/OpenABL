@@ -837,12 +837,25 @@ FillEntries (
     CONST BOOT_ENTRIES_VOLUME *V = &mVolumes.Items[Index];
 
     for (UINTN Index2 = 0; Index2 < V->Entries.Count; Index2++) {
-      CONST BOOT_ENTRY *Entry = &V->Entries.Items[Index2];
+      CONST BOOT_ENTRY *Entry    = &V->Entries.Items[Index2];
+      BOOLEAN           IsBootIm = FALSE;
 
+      if (Entry->Action.Kind == BOOT_ENTRY_ACTION_LINUX &&
+          Entry->Action.Kernel) {
+        for (UINTN Index3 = 0;
+             Index3 < sizeof (gModelsBootImages) / sizeof (*gModelsBootImages);
+             Index3++) {
+          if (AsciiStrEq (Entry->Action.Kernel, gModelsBootImages[Index3])) {
+            IsBootIm = TRUE;
+            Image    = TRUE;
+            break;
+          }
+        }
+      }
       AddRow (
         Views, &Count, Index, Entry->Title ? Entry->Title : Entry->Id,
         EntryKind (Entry->Source), Entry->Version,
-        BootEntryIsBad (Entry), Entry->Id
+        BootEntryIsBad (Entry), IsBootIm ? MENU_PICK_BOOT_IMAGE : Entry->Id
       );
     }
   }

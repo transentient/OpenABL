@@ -276,10 +276,11 @@ CarveoutsForChip (
     CONST CHAR8           *Prefix;
     CONST CARVEOUTS_TABLE *Table;
   } ByName[] = {
-    {"SM4450", &gCarveoutsSm4450}, {"SM6450", &gCarveoutsSm6450},
-    {"SM8250", &gCarveoutsSm8250}, {"SM8550", &gCarveoutsSm8550},
-    {"SM8650", &gCarveoutsSm8650}, {"SM8750", &gCarveoutsSm8750},
-    {"SM6115", &gCarveoutsSm6115}, {"SDM845", &gCarveoutsSdm845},
+    {"SM4450", &gCarveoutsSm4450},  {"SM6450", &gCarveoutsSm6450},
+    {"SM8250", &gCarveoutsSm8250},  {"SM8550", &gCarveoutsSm8550},
+    {"QCS8550", &gCarveoutsSm8550}, {"SM8650", &gCarveoutsSm8650},
+    {"SM8750", &gCarveoutsSm8750},  {"CQ8725S", &gCarveoutsSm8750},
+    {"SM6115", &gCarveoutsSm6115},  {"SDM845", &gCarveoutsSdm845},
     {"SDA845", &gCarveoutsSdm845},
   };
   OABL_TEXT Chip;
@@ -291,11 +292,14 @@ CarveoutsForChip (
     return &gCarveoutsSm6450;
   case 356:
     return &gCarveoutsSm8250;
+  case 519:
+  case 536:
   case 601:
   case 603:
     return &gCarveoutsSm8550;
   case 682:
     return &gCarveoutsSm8650;
+  case 618:
   case 639:
   case 706:
     return &gCarveoutsSm8750;

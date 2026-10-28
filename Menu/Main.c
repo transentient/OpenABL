@@ -25,6 +25,7 @@
 #include "Efi/DisplayHandover.h"
 #include "Efi/Handover.h"
 #include "Efi/Input.h"
+#include "Efi/Models.h"
 #include "Efi/Qcom.h"
 #include "Efi/Quirks.h"
 #include "Efi/Variables.h"
@@ -283,6 +284,26 @@ StandardBoot (
     CHAR8 *Description = BooterDescribe (&Booter, &Booter.Plan.Items[Index]);
     MenuLog ("plan %llu: %s", (UINT64)Index, Description ? Description : "");
     FreePool (Description);
+  }
+  if (Booter.Plan.Items[0].Kind == BOOT_MANAGER_TARGET_ENTRY) {
+    CONST BOOT_ENTRIES_VOLUME *V =
+      &Booter.Volumes.Items[Booter.Plan.Items[0].Volume];
+    CONST BOOT_ENTRY *Entry = &V->Entries.Items[Booter.Plan.Items[0].Entry];
+
+    if (Entry->Action.Kind == BOOT_ENTRY_ACTION_LINUX && Entry->Action.Kernel) {
+      for (UINTN Index = 0;
+           Index < sizeof (gModelsBootImages) / sizeof (*gModelsBootImages);
+           Index++) {
+        if (AsciiStrEq (Entry->Action.Kernel, gModelsBootImages[Index])) {
+          MenuLog (
+            "plan 0 (%s) uses boot image %s; delegating to boot image loader",
+            Entry->Title ? Entry->Title : Entry->Id, Entry->Action.Kernel
+          );
+          BooterFree (&Booter);
+          return EFI_NOT_FOUND;
+        }
+      }
+    }
   }
   switch (BooterBoot (&Booter, &BootHost, FALSE, 0, &Why)) {
   case BOOT_FAILURE_OK:

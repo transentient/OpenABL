@@ -921,6 +921,16 @@ MenuInput (
   case INPUT_DOWN:
     A->FocusItem = Items[(Focused + 1) % Count];
     return None ();
+  case INPUT_LEFT:
+  case INPUT_RIGHT: {
+    ITEM_VIEW View;
+    AppItemView (A, Items[Focused], &View);
+    if (View.Trailing == TRAILING_CYCLE ||
+        (Input == INPUT_RIGHT && View.Trailing == TRAILING_NAVIGATE)) {
+      return Activate (A, Items[Focused]);
+    }
+    return None ();
+  }
   case INPUT_BACK:
     return None ();
   case INPUT_SELECT:
@@ -947,10 +957,13 @@ InfoInput (
   case INPUT_DOWN:
     A->InfoList.Focus = (Focus + 1) % Count;
     break;
+  case INPUT_LEFT:
   case INPUT_BACK:
   case INPUT_SELECT:
     A->Screen    = SCREEN_MENU;
     A->FocusItem = A->LinesFrom;
+    break;
+  case INPUT_RIGHT:
     break;
   }
   return None ();
@@ -980,8 +993,11 @@ ModelsInput (
   case INPUT_DOWN:
     A->ModelList.Focus = (Focus + 1) % Count;
     break;
+  case INPUT_LEFT:
   case INPUT_BACK:
     LeaveModels (A);
+    break;
+  case INPUT_RIGHT:
     break;
   case INPUT_SELECT:
     if (Focus == 0) {
@@ -1034,8 +1050,11 @@ EntriesInput (
   case INPUT_DOWN:
     A->EntryList.Focus = (Focus + 1) % Count;
     break;
+  case INPUT_LEFT:
   case INPUT_BACK:
     LeaveEntries (A);
+    break;
+  case INPUT_RIGHT:
     break;
   case INPUT_SELECT:
     if (Focus < A->EntryCount) {
@@ -1061,6 +1080,12 @@ ConfirmInput (
   case INPUT_UP:
   case INPUT_DOWN:
     A->ConfirmYes = !A->ConfirmYes;
+    return None ();
+  case INPUT_LEFT:
+    A->ConfirmYes = FALSE;
+    return None ();
+  case INPUT_RIGHT:
+    A->ConfirmYes = TRUE;
     return None ();
   case INPUT_BACK:
     A->Screen = SCREEN_MENU;

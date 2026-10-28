@@ -657,8 +657,7 @@ HandoverPrepare (
   if (Prepare->Vm) {
     HandoverHypUartOff ();
   }
-  if (Prepare->Fs && !Prepare->OwnDevicetree && Prepare->Model &&
-      *Prepare->Model) {
+  if (Prepare->Fs && !Prepare->OwnDevicetree) {
     OABL_BUFFER Dtb = {0};
 
     if (ModelsDevicetreeFor (Prepare->Fs, Prepare->Model, &Dtb)) {
@@ -668,10 +667,11 @@ HandoverPrepare (
         HandoverInstallDevicetree (Dtb.Data, Dtb.Len, Log, &Size, &At);
 
       LogPrint (
-        Log, "handover: devicetree for \"%s\" (%llu bytes): %s", Prepare->Model,
+        Log, "handover: devicetree for \"%s\" (%llu bytes): %s",
+        (Prepare->Model && *Prepare->Model) ? Prepare->Model : "single-dtb",
         (UINT64)Dtb.Len, Error ? Error : "ok"
       );
-    } else {
+    } else if (Prepare->Model && *Prepare->Model) {
       LogPrint (
         Log, "handover: no devicetree for \"%s\" on the drive", Prepare->Model
       );

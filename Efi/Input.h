@@ -24,10 +24,12 @@ typedef struct _INPUT_KEYS {
   KEYS    Decoder;
   BOOLEAN HwHeldAtStart[3];
   BOOLEAN HwPrevHeld[3];
-  BOOLEAN PadHeldAtStart[4];
-  BOOLEAN PadPrevHeld[4];
+  BOOLEAN PadHeldAtStart[6];
+  BOOLEAN PadPrevHeld[6];
   BOOLEAN PadStickUp;
   BOOLEAN PadStickDown;
+  BOOLEAN PadStickLeft;
+  BOOLEAN PadStickRight;
   BOOLEAN PadInitDone;
   BOOLEAN PadActive;
   BOOLEAN PadIsRetroid8250;

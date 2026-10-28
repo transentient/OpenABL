@@ -24,9 +24,9 @@
 #include "View/Text.h"
 #include "microui.h"
 
-#if __has_include("View/HolodorWordmarkArt.h")
-#include "View/HolodorWordmarkArt.h"
-#define HAVE_HOLODOR_WORDMARK_ART 1
+#if __has_include("View/OpenAblWordmarkArt.h")
+#include "View/OpenAblWordmarkArt.h"
+#define HAVE_OPENABL_WORDMARK_ART 1
 #endif
 
 extern CONST UINT8 gOablAssetFontCjk[];
@@ -768,21 +768,21 @@ RowItem (
 
 // Header and footer
 
-// Returns the width of the "Holodor" wordmark at Size.
+// Returns the width of the "OpenABL" wordmark at Size.
 STATIC float
 WordmarkWidth (IN float Size)
 {
-#ifdef HAVE_HOLODOR_WORDMARK_ART
+#ifdef HAVE_OPENABL_WORDMARK_ART
   INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
-  return (float)(HolodorWordmark_W * Scale);
+  return (float)(OpenAblWordmark_W * Scale);
 #else
-  return Measure ("Holo", Size, FONT_WEIGHT_MEDIUM) +
-         Measure ("dor", Size, FONT_WEIGHT_MEDIUM);
+  return Measure ("Open", Size, FONT_WEIGHT_MEDIUM) +
+         Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
 #endif
 }
 
-// Draws the "Holodor" wordmark from X, its capitals centred on Cy: "Holo"
-// in the text colour, "dor" in the brand colour.
+// Draws the "OpenABL" wordmark from X, its capitals centred on Cy: "Open"
+// in the text colour, "ABL" in the brand colour.
 STATIC VOID
 Wordmark (
   IN float X,
@@ -790,19 +790,19 @@ Wordmark (
   IN float Size
 )
 {
-#ifdef HAVE_HOLODOR_WORDMARK_ART
+#ifdef HAVE_OPENABL_WORDMARK_ART
   INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
   INT32 X0    = (INT32)RoundF (X);
-  INT32 Y0    = (INT32)RoundF (Cy) - (HolodorWordmark_H * Scale) / 2;
+  INT32 Y0    = (INT32)RoundF (Cy) - (OpenAblWordmark_H * Scale) / 2;
   INT32 Px    = 0;
   INT32 Py    = 0;
-  for (UINTN Off = 0; Off + 1 < HolodorWordmark_RLE_SIZE; Off += 2) {
-    UINT32 Rem   = gHolodorWordmarkRle[Off];
-    UINT32 Argb  = gHolodorWordmarkPalette[gHolodorWordmarkRle[Off + 1]];
+  for (UINTN Off = 0; Off + 1 < OpenAblWordmark_RLE_SIZE; Off += 2) {
+    UINT32 Rem   = gOpenAblWordmarkRle[Off];
+    UINT32 Argb  = gOpenAblWordmarkPalette[gOpenAblWordmarkRle[Off + 1]];
     UINT32 Rgb   = Argb & 0xFFFFFFU;
     UINT8  Alpha = (UINT8)(Argb >> 24);
-    while (Rem > 0 && Py < HolodorWordmark_H) {
-      UINT32 Span = (UINT32)(HolodorWordmark_W - Px);
+    while (Rem > 0 && Py < OpenAblWordmark_H) {
+      UINT32 Span = (UINT32)(OpenAblWordmark_W - Px);
       if (Span > Rem) {
         Span = Rem;
       }
@@ -813,7 +813,7 @@ Wordmark (
         );
       }
       Px += (INT32)Span;
-      if (Px >= HolodorWordmark_W) {
+      if (Px >= OpenAblWordmark_W) {
         Px = 0;
         Py++;
       }
@@ -821,16 +821,16 @@ Wordmark (
     }
   }
 #else
-  float OpenW = Measure ("Holo", Size, FONT_WEIGHT_MEDIUM);
-  float AblW  = Measure ("dor", Size, FONT_WEIGHT_MEDIUM);
+  float OpenW = Measure ("Open", Size, FONT_WEIGHT_MEDIUM);
+  float AblW  = Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
   float H     = ToPx (Size) * 2;
 
   TextIn (
-    Rectf (X, Cy - H / 2, OpenW + ToPx (2), H), "Holo", Size,
+    Rectf (X, Cy - H / 2, OpenW + ToPx (2), H), "Open", Size,
     FONT_WEIGHT_MEDIUM, THEME_TEXT, ALIGN_LEFT
   );
   TextIn (
-    Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "dor", Size,
+    Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "ABL", Size,
     FONT_WEIGHT_MEDIUM, THEME_BRAND, ALIGN_LEFT
   );
 #endif
@@ -853,10 +853,7 @@ HeaderDraw (IN CONST APP *A)
   TextIn (Chip, Version, 12.5f, FONT_WEIGHT_REGULAR, THEME_TEXT2, ALIGN_CENTER);
 }
 
-// The key hints, each an icon for the key and what it does. Handheld
-// keypads have no back key and don't report holds, so every screen has its
-// own way out (a Back row, Cancel, any key); on the log the power key goes
-// back.
+// The key hints, each an icon for the key and what it does.
 STATIC VOID
 FooterDraw (IN CONST APP *A)
 {
@@ -865,7 +862,6 @@ FooterDraw (IN CONST APP *A)
     ICON         Icon;
     CONST CHAR8 *Label;
   } HINT;
-  BOOLEAN Handheld = A->Scheme == SCHEME_HANDHELD;
   BOOLEAN Back     = A->Screen == SCREEN_LINES;
   HINT    Hints[3] = {{ICON_ARROWS_VERTICAL, gStrings->HintMove}};
   UINTN   Count    = 1;
@@ -875,13 +871,9 @@ FooterDraw (IN CONST APP *A)
   float   Total = 0;
 
   if (!Back) {
-    Hints[Count++] =
-      (HINT){Handheld ? ICON_POWER : ICON_ENTER, gStrings->HintSelect};
+    Hints[Count++] = (HINT){ICON_ENTER, gStrings->HintSelect};
   }
-  if (Back || !Handheld) {
-    Hints[Count++] =
-      (HINT){Handheld ? ICON_POWER : ICON_ARROW_BACK, gStrings->HintBack};
-  }
+  Hints[Count++] = (HINT){ICON_ARROW_BACK, gStrings->HintBack};
 
   Fill (Rect (R.X, R.Y, R.W, Imax (ToPxInt (1), 1)), THEME_LINE, 255);
   for (UINTN Index = 0; Index < Count; Index++) {

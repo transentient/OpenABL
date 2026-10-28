@@ -23,9 +23,9 @@
 #include "Efi/Files.h"
 #include "Efi/Qcom.h"
 
-#if __has_include("Menu/HolodorSplashArt.h")
-#include "Menu/HolodorSplashArt.h"
-#define HAVE_HOLODOR_SPLASH_ART 1
+#if __has_include("Menu/OpenAblSplashArt.h")
+#include "Menu/OpenAblSplashArt.h"
+#define HAVE_OPENABL_SPLASH_ART 1
 #endif
 
 extern CONST UINT8 gOablAssetFont[];
@@ -449,24 +449,24 @@ MenuBootSplash (
   FillRect (
     &Splash.Canvas, 0, 0, Splash.Canvas.W, Splash.Canvas.H, 0x000000, 255
   );
-#ifdef HAVE_HOLODOR_SPLASH_ART
+#ifdef HAVE_OPENABL_SPLASH_ART
   {
-    INT32 ScaleX = Splash.Canvas.W / HolodorSplash_W;
-    INT32 ScaleY = Splash.Canvas.H / HolodorSplash_H;
+    INT32 ScaleX = Splash.Canvas.W / OpenAblSplash_W;
+    INT32 ScaleY = Splash.Canvas.H / OpenAblSplash_H;
     INT32 Scale  = ScaleX < ScaleY ? ScaleX : ScaleY;
     INT32 X0, Y0, X = 0, Y = 0;
     if (Scale < 1) {
       Scale = 1;
     }
-    X0 = (Splash.Canvas.W - HolodorSplash_W * Scale) / 2;
-    Y0 = (Splash.Canvas.H - HolodorSplash_H * Scale) / 2;
-    for (UINTN Off = 0; Off + 1 < HolodorSplash_RLE_SIZE; Off += 2) {
-      UINT32 Rem = gHolodorSplashRle[Off];
-      UINT32 Argb = gHolodorSplashPalette[gHolodorSplashRle[Off + 1]];
+    X0 = (Splash.Canvas.W - OpenAblSplash_W * Scale) / 2;
+    Y0 = (Splash.Canvas.H - OpenAblSplash_H * Scale) / 2;
+    for (UINTN Off = 0; Off + 1 < OpenAblSplash_RLE_SIZE; Off += 2) {
+      UINT32 Rem = gOpenAblSplashRle[Off];
+      UINT32 Argb = gOpenAblSplashPalette[gOpenAblSplashRle[Off + 1]];
       UINT32 Rgb  = Argb & 0xFFFFFFU;
       UINT8  Alpha = (UINT8)(Argb >> 24);
-      while (Rem > 0 && Y < HolodorSplash_H) {
-        UINT32 Span = (UINT32)(HolodorSplash_W - X);
+      while (Rem > 0 && Y < OpenAblSplash_H) {
+        UINT32 Span = (UINT32)(OpenAblSplash_W - X);
         if (Span > Rem) {
           Span = Rem;
         }
@@ -477,7 +477,7 @@ MenuBootSplash (
           );
         }
         X += (INT32)Span;
-        if (X >= HolodorSplash_W) {
+        if (X >= OpenAblSplash_W) {
           X = 0;
           Y++;
         }
@@ -498,27 +498,27 @@ MenuBootSplash (
       CapH = 24.0f;
     }
     Em = CapH / FontCapHeight (1.0f);
-    W  = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "Holodor");
+    W  = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "OpenABL");
     if (W > (float)LogicalW * 0.6f) {
       Em *= (float)LogicalW * 0.6f / W;
       CapH = FontCapHeight (Em);
-      W    = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "Holodor");
+      W    = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "OpenABL");
     }
-    OpenW = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "Holo");
+    OpenW = TextAdvance (Em, FONT_WEIGHT_MEDIUM, "Open");
     X     = ((float)LogicalW - W) / 2.0f;
     DrawText (
       &Splash.Canvas, X, ((float)LogicalH + CapH) / 2.0f, Em,
-      FONT_WEIGHT_MEDIUM, "Holo", 0xFFFFFF
+      FONT_WEIGHT_MEDIUM, "Open", 0xFFFFFF
     );
     DrawText (
       &Splash.Canvas, X + OpenW, ((float)LogicalH + CapH) / 2.0f, Em,
-      FONT_WEIGHT_MEDIUM, "dor", 0xFF5555
+      FONT_WEIGHT_MEDIUM, "ABL", 0xFF5555
     );
   }
 #endif
   ShowFrame (&Splash);
   MenuLog (
-    "splash: the Holodor wordmark drawn over the firmware's on the panel (%s)",
+    "splash: the OpenABL wordmark drawn over the firmware's on the panel (%s)",
     Size
   );
   SplashFree (&Splash);

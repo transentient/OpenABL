@@ -322,8 +322,9 @@ STATIC CONST UINT8 mAcmd41Mask[2][24] = {
 #define MOVK_S18R_CLEAR 0x72a81ff5u
 // Also sets XPC (OCR bit 28, SDXC power control).
 #define MOVK_XPC_S18R_CLEAR 0x72aa1ff5u
-// SM8250, SM8550/QCS8550, SM8650 and SM8750 chip ids, whose cards get XPC.
-STATIC CONST UINT32 mXpcChips[] = {356, 519, 536, 603, 682, 639, 706};
+// SM8250, SM8550/QCS8550/SG3xG2, SM8650 and SM8750/CQ8725S chip ids, whose
+// cards get XPC.
+STATIC CONST UINT32 mXpcChips[] = {356, 519, 536, 601, 603, 682, 618, 639, 706};
 #define MAX_SITES 16
 
 STATIC BOOLEAN
