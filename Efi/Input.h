@@ -4,13 +4,15 @@
  */
 
 /**
-  Input - maps firmware key events to UI inputs.
+  Input - maps firmware key events and Moorechip handheld D-Pad UART events to
+  UI inputs.
 
   Up and volume up are Up, down and volume down are Down, Esc and Backspace
-  are Back, and Enter, Space and SCAN_SUSPEND (the power key on Qualcomm
-  keypads) are Select. Other keys are ignored. The input is reset after
-  each read, so Qualcomm's keypad reports a held key again. Repeat and hold
-  timing is left to the UI's key decoder (Ui/Ui.h).
+  are Back, Left/Right and the handheld D-Pad Left/Right are Left/Right, and
+  Enter, Space and SCAN_SUSPEND (the power key on Qualcomm keypads) are
+  Select. Other keys are ignored. The input is reset after each read, so
+  Qualcomm's keypad reports a held key again. Repeat and hold timing is left
+  to the UI's key decoder (Ui/Ui.h).
 */
 
 #ifndef __EFI_INPUT_H__
@@ -21,8 +23,32 @@
 #include "Base/Buffer.h"
 #include "Ui/Ui.h"
 
+typedef struct _LEVEL_BTN {
+  BOOLEAN HeldAtStart;
+  BOOLEAN PrevHeld;
+  UINT64  HoldStartMs;
+  UINT64  LastEmitMs;
+  UINT64  ReleaseMs;
+} LEVEL_BTN;
+
 typedef struct _INPUT_KEYS {
-  KEYS Decoder;
+  KEYS      Decoder;
+  LEVEL_BTN PadBtn[4];
+  BOOLEAN   PadFirstFrameSeen;
+  BOOLEAN   PadLiveHeld[4];
+  BOOLEAN   PadInitDone;
+  BOOLEAN   PadActive;
+  BOOLEAN   PadIsRetroid8250;
+  UINT8     PadStep;
+  UINT8     PadAttempts;
+  UINT8     PadSeq;
+  UINT16    PadEnGpio;
+  UINT16    PadRstGpio;
+  UINT64    PadUartBase;
+  UINT64    PadNextMs;
+  UINT64    PadLastPollMs;
+  UINTN     PadRxLen;
+  UINT8     PadRxBuf[256];
 } INPUT_KEYS;
 
 typedef struct _INPUT_EVENTS OABL_VEC (INPUT) INPUT_EVENTS;
@@ -51,11 +77,17 @@ InputKeysPoll (
   IN OUT INPUT_EVENTS *Out
 );
 
-// Mutes a key still held after the menu was busy, until it is released.
+// Mutes a key still held after the menu was busy, until it is released, and
+// flushes any stale bytes queued in the handheld gamepad UART RX FIFO.
 VOID
 InputKeysAfterBusy (
   IN OUT INPUT_KEYS *Keys,
   IN UINT64          Now
 );
+
+// Quiesces the handheld gamepad MCU and UART before leaving the interactive
+// menu so the OS kernel sees an idle serial engine and quiet IRQ line at boot.
+VOID
+InputKeysClose (IN OUT INPUT_KEYS *Keys);
 
 #endif
