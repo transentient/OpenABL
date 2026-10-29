@@ -291,6 +291,15 @@ StandardBoot (
     CONST BOOT_ENTRY *Entry = &V->Entries.Items[Booter.Plan.Items[0].Entry];
 
     if (Entry->Action.Kind == BOOT_ENTRY_ACTION_LINUX && Entry->Action.Kernel) {
+      if (!Entry->Action.Devicetree && !Entry->Action.FdtDir &&
+          !Ctx->Model[0]) {
+        MenuLog (
+          "plan 0 (%s) has no devicetree and no device model is set",
+          Entry->Title ? Entry->Title : Entry->Id
+        );
+        BooterFree (&Booter);
+        return EFI_NOT_FOUND;
+      }
       for (UINTN Index = 0;
            Index < sizeof (gModelsBootImages) / sizeof (*gModelsBootImages);
            Index++) {
@@ -914,11 +923,9 @@ Early (IN CONST MENU_HOST *Host)
   Chip = QuirksChipId ();
   if (InputVolumeDownHeld ()) {
     gEarlyFastboot = TRUE;
-    MenuLog ("early: Volume Down held, skipping SDCC quirks for Fastboot");
-  } else {
-    Patched = QuirksSdccUhs (Chip, gMenuEfiLog);
-    MenuLog ("early: %u SdccDxe site(s) patched", Patched);
   }
+  Patched = QuirksSdccUhs (Chip, gMenuEfiLog);
+  MenuLog ("early: %u SdccDxe site(s) patched", Patched);
   if (!Resident ()) {
     MenuLog (
       "built as an application, so it can't stay loaded: no storage protocol"
@@ -939,10 +946,8 @@ Early (IN CONST MENU_HOST *Host)
       );
     }
   }
-  if (!gEarlyFastboot) {
-    // Run XBL's SD card detection once more as the ABL goes on.
-    QuirksSignalSdDetect ();
-  }
+  // Run XBL's SD card detection once more as the ABL goes on.
+  QuirksSignalSdDetect ();
   return Status;
 }
 

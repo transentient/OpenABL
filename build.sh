@@ -41,10 +41,10 @@ chipset() {
     sm6115) SIGN=-v6 PVMFW=false BUNDLED_USB=1 ABL_EXTRA=TARGET_SOC_SM6115=1 OWN=devinfo-settings,loader-quirks ;;
     sm6450) OWN=devinfo-settings,sdcc-sm6450 ;;
     sm7675) OWN=devinfo-settings,sdcc-sm7675 ;;
-    sm8550) OWN=devinfo-settings ;;
-    sm8650) OWN=devinfo-settings,park-display ;;
-    sm8750) OWN=devinfo-settings,park-display OWN_FULL=sysfont ;;
-    sm8250) SIGN=-v6 PVMFW=false OWN=devinfo-settings ;;
+    sm8550) OWN=devinfo-settings,sd-diagnostics ;;
+    sm8650) OWN=devinfo-settings,park-display,sd-diagnostics ;;
+    sm8750) OWN=devinfo-settings,park-display,sd-diagnostics OWN_FULL=sysfont ;;
+    sm8250) SIGN=-v6 PVMFW=false OWN=devinfo-settings,sd-diagnostics ;;
     *) echo "unknown chipset $1" >&2; usage ;;
   esac
 }

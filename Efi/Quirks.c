@@ -290,13 +290,6 @@ QuirksSignalSdDetect (VOID)
   SignalGroup (&mDetectSdCard);
 }
 
-// SdccDxe: power-cycling the SD card rails so a card left in 1.8 V signaling
-// mode by Android resets back to 3.3 V before SdccDxe sends ACMD41 with
-// S18R=0. On RPMh/VRM platforms (SM8550/QCS8550), Android's HLOS DRV0 vote
-// stays latched in VRM across a warm reboot, so MAX(DRV0, DRV2) prevents
-// EFI_NPA_PROTOCOL (DRV2) from turning ldob9 off; EFI_QCOM_PMIC_VREG_PROTOCOL
-// writes directly over SPMI to LDO_EN_CTL and LDO_VSET to force a true power
-// cycle and restore 2.952 V IO signaling on ldob8.
 // SdccDxe: the 1.8 V request
 
 // The movk that sets S18R in the ACMD41 argument and what follows it, in
@@ -903,6 +896,8 @@ SdCmdPullup (IN LOG_SINK Log)
 #define SD_SLOT     1ull
 #define SLOT_STRIDE 0x100ull
 
+STATIC UINT64 mSdccSite;
+
 // Finds the base and size of the loaded image containing Addr.
 STATIC BOOLEAN
 ImageAround (
@@ -1197,7 +1192,8 @@ QuirksSdccUhs (
 #endif
 #ifdef OABL_SD_DIAGNOSTICS
   if (Sites.Count > 0) {
-    SdSlotReport (Sites.Items[0], "before", Log);
+    mSdccSite = Sites.Items[0];
+    SdSlotReport (mSdccSite, "before", Log);
   }
 #endif
 #ifdef OABL_SDCC_SM7675
@@ -1206,19 +1202,6 @@ QuirksSdccUhs (
   if (Patched > 0 || Longer > 0 || Pulled) {
     // Detection runs inside SignalEvent, as its notify TPL is above ours.
     QuirksSignalSdDetect ();
-  }
-  for (UINTN Index = 0; Index < Tries.Count; Index++) {
-    CONST TRIES_WORD *Word = &Tries.Items[Index];
-    BOOLEAN           Ok;
-
-    if (!Word->Patched) {
-      continue;
-    }
-    Ok = WriteWord (Word->At, TRUE, Word->Longer, Word->Built);
-    LogPrint (
-      Log, "sdcc: ACMD41 tries back to 200 @0x%llx: %s", (UINT64)Word->At,
-      Ok ? "done" : "REFUSED"
-    );
   }
 #ifdef OABL_SD_DIAGNOSTICS
   if (Sites.Count > 0) {
@@ -1507,13 +1490,55 @@ QuirksConnectAll (
   QuirksFatCache (Chip, Log);
 }
 
+// SdccDxe's mDetectSdCard callback is a no-op if a previous SD card left
+// SdccDevice.ClientHandle non-NULL. Calling ReadBlocks with BufferSize=0
+// invokes SdccDxe's sdcc_handle_is_mem_present (CMD13) check: if the card
+// was removed or swapped, SdccReadBlocks closes the stale ClientHandle and
+// clears MediaPresent so the subsequent QuirksSignalSdDetect re-opens the
+// slot with the new card.
+STATIC VOID
+SdccRefreshRemovableSlots (VOID)
+{
+  EFI_HANDLE *Handles = NULL;
+  UINTN       Count   = 0;
+  UINT8       Dummy   = 0;
+
+  if (EFI_ERROR (gBS->LocateHandleBuffer (
+        ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles
+      ))) {
+    return;
+  }
+  for (UINTN Index = 0; Index < Count; Index++) {
+    EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
+
+    if (EFI_ERROR (gBS->HandleProtocol (
+          Handles[Index], &gEfiBlockIoProtocolGuid, (VOID **)&Bio
+        )) ||
+        !Bio || !Bio->Media || !Bio->Media->RemovableMedia ||
+        Bio->Media->LogicalPartition || !Bio->Media->MediaPresent ||
+        !Bio->ReadBlocks) {
+      continue;
+    }
+    Bio->ReadBlocks (Bio, Bio->Media->MediaId, 0, 0, &Dummy);
+  }
+  if (Handles) {
+    gBS->FreePool (Handles);
+  }
+}
+
 VOID
 QuirksPrepareStorage (
   IN UINT32   Chip,
   IN LOG_SINK Log
 )
 {
+  SdccRefreshRemovableSlots ();
   QuirksSignalSdDetect ();
+#ifdef OABL_SD_DIAGNOSTICS
+  if (mSdccSite != 0) {
+    SdSlotReport (mSdccSite, "prepare", Log);
+  }
+#endif
   QuirksConnectAll (Chip, Log);
 }
 

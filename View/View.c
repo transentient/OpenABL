@@ -24,11 +24,6 @@
 #include "View/Text.h"
 #include "microui.h"
 
-#if __has_include("View/OpenAblWordmarkArt.h")
-#include "View/OpenAblWordmarkArt.h"
-#define HAVE_OPENABL_WORDMARK_ART 1
-#endif
-
 extern CONST UINT8 gOablAssetFontCjk[];
 extern CONST UINTN gOablAssetFontCjkSize;
 
@@ -772,13 +767,8 @@ RowItem (
 STATIC float
 WordmarkWidth (IN float Size)
 {
-#ifdef HAVE_OPENABL_WORDMARK_ART
-  INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
-  return (float)(OpenAblWordmark_W * Scale);
-#else
   return Measure ("Open", Size, FONT_WEIGHT_MEDIUM) +
          Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
-#endif
 }
 
 // Draws the "OpenABL" wordmark from X, its capitals centred on Cy: "Open"
@@ -790,37 +780,6 @@ Wordmark (
   IN float Size
 )
 {
-#ifdef HAVE_OPENABL_WORDMARK_ART
-  INT32 Scale = Imax ((INT32)RoundF (ToPx (Size / 10.0f)), 1);
-  INT32 X0    = (INT32)RoundF (X);
-  INT32 Y0    = (INT32)RoundF (Cy) - (OpenAblWordmark_H * Scale) / 2;
-  INT32 Px    = 0;
-  INT32 Py    = 0;
-  for (UINTN Off = 0; Off + 1 < OpenAblWordmark_RLE_SIZE; Off += 2) {
-    UINT32 Rem   = gOpenAblWordmarkRle[Off];
-    UINT32 Argb  = gOpenAblWordmarkPalette[gOpenAblWordmarkRle[Off + 1]];
-    UINT32 Rgb   = Argb & 0xFFFFFFU;
-    UINT8  Alpha = (UINT8)(Argb >> 24);
-    while (Rem > 0 && Py < OpenAblWordmark_H) {
-      UINT32 Span = (UINT32)(OpenAblWordmark_W - Px);
-      if (Span > Rem) {
-        Span = Rem;
-      }
-      if (Alpha >= 128) {
-        Fill (
-          Rect (X0 + Px * Scale, Y0 + Py * Scale, (INT32)Span * Scale, Scale),
-          Rgb, Alpha
-        );
-      }
-      Px += (INT32)Span;
-      if (Px >= OpenAblWordmark_W) {
-        Px = 0;
-        Py++;
-      }
-      Rem -= Span;
-    }
-  }
-#else
   float OpenW = Measure ("Open", Size, FONT_WEIGHT_MEDIUM);
   float AblW  = Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
   float H     = ToPx (Size) * 2;
@@ -833,7 +792,6 @@ Wordmark (
     Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "ABL", Size,
     FONT_WEIGHT_MEDIUM, THEME_BRAND, ALIGN_LEFT
   );
-#endif
 }
 
 // The wordmark and the version in a chip at the right.
@@ -853,7 +811,10 @@ HeaderDraw (IN CONST APP *A)
   TextIn (Chip, Version, 12.5f, FONT_WEIGHT_REGULAR, THEME_TEXT2, ALIGN_CENTER);
 }
 
-// The key hints, each an icon for the key and what it does.
+// The key hints, each an icon for the key and what it does. Handheld
+// keypads have no back key and don't report holds, so every screen has its
+// own way out (a Back row, Cancel, any key); on the log the power key goes
+// back.
 STATIC VOID
 FooterDraw (IN CONST APP *A)
 {
@@ -862,6 +823,7 @@ FooterDraw (IN CONST APP *A)
     ICON         Icon;
     CONST CHAR8 *Label;
   } HINT;
+  BOOLEAN Handheld = A->Scheme == SCHEME_HANDHELD;
   BOOLEAN Back     = A->Screen == SCREEN_LINES;
   HINT    Hints[3] = {{ICON_ARROWS_VERTICAL, gStrings->HintMove}};
   UINTN   Count    = 1;
@@ -871,9 +833,13 @@ FooterDraw (IN CONST APP *A)
   float   Total = 0;
 
   if (!Back) {
-    Hints[Count++] = (HINT){ICON_ENTER, gStrings->HintSelect};
+    Hints[Count++] =
+      (HINT){Handheld ? ICON_POWER : ICON_ENTER, gStrings->HintSelect};
   }
-  Hints[Count++] = (HINT){ICON_ARROW_BACK, gStrings->HintBack};
+  if (Back || !Handheld) {
+    Hints[Count++] =
+      (HINT){Handheld ? ICON_POWER : ICON_ARROW_BACK, gStrings->HintBack};
+  }
 
   Fill (Rect (R.X, R.Y, R.W, Imax (ToPxInt (1), 1)), THEME_LINE, 255);
   for (UINTN Index = 0; Index < Count; Index++) {

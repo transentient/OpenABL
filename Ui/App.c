@@ -923,11 +923,20 @@ MenuInput (
     return None ();
   case INPUT_LEFT:
   case INPUT_RIGHT: {
+    ITEM      Item = Items[Focused];
     ITEM_VIEW View;
-    AppItemView (A, Items[Focused], &View);
-    if (View.Trailing == TRAILING_CYCLE ||
-        (Input == INPUT_RIGHT && View.Trailing == TRAILING_NAVIGATE)) {
-      return Activate (A, Items[Focused]);
+    AppItemView (A, Item, &View);
+    if (View.Trailing == TRAILING_CYCLE) {
+      return Activate (A, Item);
+    }
+    // D-Pad Right may open non-destructive sub-screens (Boot entries, Device
+    // model, Device info, Log), while Start, Restart bootloader, Recovery,
+    // Boot other slot, EDL, Uninstall, and Power off require the Power button
+    // (INPUT_SELECT).
+    if (Input == INPUT_RIGHT &&
+        (Item == ITEM_ENTRIES || Item == ITEM_MODEL ||
+         Item == ITEM_DEVICE_INFO || Item == ITEM_LOG)) {
+      return Activate (A, Item);
     }
     return None ();
   }
@@ -998,7 +1007,6 @@ ModelsInput (
     LeaveModels (A);
     break;
   case INPUT_RIGHT:
-    break;
   case INPUT_SELECT:
     if (Focus == 0) {
       // No model, so the OS gets the firmware's devicetree untouched.
@@ -1055,6 +1063,9 @@ EntriesInput (
     LeaveEntries (A);
     break;
   case INPUT_RIGHT:
+    if (Focus >= A->EntryCount) {
+      LeaveEntries (A);
+    }
     break;
   case INPUT_SELECT:
     if (Focus < A->EntryCount) {
@@ -1081,12 +1092,9 @@ ConfirmInput (
   case INPUT_DOWN:
     A->ConfirmYes = !A->ConfirmYes;
     return None ();
-  case INPUT_LEFT:
-    A->ConfirmYes = FALSE;
-    return None ();
   case INPUT_RIGHT:
-    A->ConfirmYes = TRUE;
     return None ();
+  case INPUT_LEFT:
   case INPUT_BACK:
     A->Screen = SCREEN_MENU;
     return None ();

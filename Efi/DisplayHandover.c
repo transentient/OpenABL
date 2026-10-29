@@ -434,12 +434,18 @@ DisplayHandoverBeforeExit (
 #endif
 }
 
+#ifdef OABL_DISPLAY_OFF
 STATIC BOOLEAN mKeepSplash;
+#endif
 
 VOID
 DisplayHandoverKeepSplash (IN BOOLEAN Keep)
 {
+#ifdef OABL_DISPLAY_OFF
   mKeepSplash = Keep;
+#else
+  (VOID)Keep;
+#endif
 }
 
 #ifdef OABL_DISPLAY_OFF

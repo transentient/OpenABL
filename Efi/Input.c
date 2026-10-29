@@ -60,15 +60,16 @@ typedef struct _PMIC_GPIO_PROTOCOL {
   );
 } PMIC_GPIO_PROTOCOL;
 
-// EFI_TLMM_PROTOCOL_GUID: used to configure TLMM UART pins and MCU enable/reset
-// GPIOs for handheld UART gamepads.
+// EFI_TLMM_PROTOCOL_GUID (DALTLMM.dll 0xa068): used to configure TLMM UART pins
+// and MCU enable/reset GPIOs for handheld UART gamepads.
 STATIC EFI_GUID mTlmmGuid = {
-  0x1ef8402d,
-  0x03b4,
-  0x409f,
-  {0xba, 0x62, 0x11, 0x52, 0x93, 0x23, 0x56, 0x1f}};
+  0xad9aec18,
+  0x7bf0,
+  0x4809,
+  {0x9e, 0x96, 0x30, 0x12, 0x30, 0x9f, 0x3d, 0xf7}};
 
 typedef struct _TLMM_PROTOCOL {
+  UINT64 Revision;
   EFI_STATUS (EFIAPI *ConfigGpio) (IN UINT32 Config, IN UINT32 Enable);
   VOID *ConfigGpioGroup;
   EFI_STATUS (EFIAPI *GpioIn) (IN UINT32 Config, OUT UINT32 *Value);
@@ -235,18 +236,24 @@ PadGpioOut (
 STATIC BOOLEAN
 GamepadBoardOf (OUT PAD_BOARD *Out)
 {
-  QCOM_CHIP Chip;
-  UINT32    Id;
-  OABL_TEXT Name;
+  QCOM_CHIP                          Chip;
+  EFI_PLATFORMINFO_PLATFORM_INFO_TYPE Platform;
+  BOOLEAN                            HasPlat;
+  UINT32                             Id;
+  OABL_TEXT                          Name;
 
   if (!QcomChip (&Chip)) {
     return FALSE;
   }
-  Id   = EFI_ERROR (Chip.Id.Status) ? 0 : Chip.Id.Value;
-  Name = TextTrim (TextOf (Chip.Name));
+  HasPlat = QcomPlatform (&Platform);
+  Id      = EFI_ERROR (Chip.Id.Status) ? 0 : Chip.Id.Value;
+  Name    = TextTrim (TextOf (Chip.Name));
 
-  // SM8250: Retroid Pocket 5 / Flip 2 / Mini (uart16 @ 0x00888000, QUP2 SE2)
-  if (Id == 356 || TextStartsWith (Name, "SM8250")) {
+  // SM8250 Moorechip HDK (board-id 0x1f): Retroid Pocket 5 / Flip 2 / Mini /
+  // AYN Thor Lite (uart16 @ 0x00888000, QUP2 SE2). Non-Moorechip SM8250 boards
+  // (e.g. Mangmi Pocket Max, board-id 0x08 MTP) are skipped.
+  if ((Id == 356 || TextStartsWith (Name, "SM8250")) && HasPlat &&
+      (UINT32)Platform.platform == 0x1FU) {
     *Out = (PAD_BOARD){
       .UartBase      = 0x00888000ULL,
       .VoteReg       = 0x00152010ULL,
@@ -264,10 +271,12 @@ GamepadBoardOf (OUT PAD_BOARD *Out)
     return TRUE;
   }
 
-  // SM8550 / QCS8550 / SG3x Gen 2: RP6 / RP Nova / Odin 2 family
-  // (uart15 @ 0x0089C000, QUP2 SE7)
-  if (Id == 601 || Id == 603 || Id == 519 || Id == 536 ||
-      TextStartsWith (Name, "SM8550") || TextStartsWith (Name, "QCS8550")) {
+  // SM8550 / QCS8550 Moorechip HDK (board-id 0x1f): RP6 / RP Nova / Odin 2 /
+  // Thor family (uart15 @ 0x0089C000, QUP2 SE7). Non-Moorechip SM8550/SG3x
+  // boards (e.g. Ayaneo Pocket S/DMG/EVO/ACE, board-id 0x0b QRD) are skipped.
+  if ((Id == 601 || Id == 603 || Id == 519 || Id == 536 ||
+       TextStartsWith (Name, "SM8550") || TextStartsWith (Name, "QCS8550")) &&
+      HasPlat && (UINT32)Platform.platform == 0x1FU) {
     *Out = (PAD_BOARD){
       .UartBase      = 0x0089C000ULL,
       .VoteReg       = 0x00152010ULL,
@@ -285,9 +294,10 @@ GamepadBoardOf (OUT PAD_BOARD *Out)
     return TRUE;
   }
 
-  // SM8750 / CQ8725S: Odin 3 family (uart15 @ 0x0089C000, QUP2 SE7)
-  if (Id == 639 || Id == 706 || Id == 618 ||
-      TextStartsWith (Name, "SM8750") || TextStartsWith (Name, "CQ8725S")) {
+  // SM8750 / CQ8725S: AYN Odin 3 family (uart15 @ 0x0089C000, QUP2 SE7).
+  if (Id == 706 || TextStartsWith (Name, "CQ8725S") ||
+      ((Id == 639 || Id == 618 || TextStartsWith (Name, "SM8750")) &&
+       HasPlat && (UINT32)Platform.platform == 0x1FU)) {
     *Out = (PAD_BOARD){
       .UartBase      = 0x0089C000ULL,
       .VoteReg       = 0x00152010ULL,
@@ -489,7 +499,7 @@ PadSendCmd (
 STATIC VOID
 GeniUartDrainRx (IN OUT INPUT_KEYS *Keys)
 {
-  UINT64 Uart       = Keys->PadUartBase;
+  UINT64 Uart = Keys->PadUartBase;
   UINT32 SStatus;
   UINT32 FifoStatus;
   UINT32 WordCnt;
@@ -497,37 +507,42 @@ GeniUartDrainRx (IN OUT INPUT_KEYS *Keys)
   if (!Uart) {
     return;
   }
-  SStatus    = RegRead32 (Uart + 0x640);
-  FifoStatus = RegRead32 (Uart + 0x804);
-  WordCnt    = FifoStatus & 0x01FFFFFFU;
-  if (WordCnt > 0) {
-    BOOLEAN LastPartial = (FifoStatus & 0x80000000U) != 0;
-    UINT32  LastBytes   = (FifoStatus >> 28) & 0x7U;
-    UINT32  TotalBytes  = 4U * (WordCnt - 1);
+  for (UINTN Pass = 0; Pass < 8; Pass++) {
+    SStatus    = RegRead32 (Uart + 0x640);
+    FifoStatus = RegRead32 (Uart + 0x804);
+    WordCnt    = FifoStatus & 0x01FFFFFFU;
+    if (WordCnt > 0) {
+      BOOLEAN LastPartial = (FifoStatus & 0x80000000U) != 0;
+      UINT32  LastBytes   = (FifoStatus >> 28) & 0x7U;
+      UINT32  TotalBytes  = 4U * (WordCnt - 1);
 
-    if (LastPartial && LastBytes) {
-      TotalBytes += LastBytes;
-    } else {
-      TotalBytes += 4U;
-    }
-    for (UINT32 WordIdx = 0; WordIdx < WordCnt; WordIdx++) {
-      UINT32 Word  = RegRead32 (Uart + 0x780);
-      UINT32 Chunk = (TotalBytes >= 4U) ? 4U : TotalBytes;
-      TotalBytes  -= Chunk;
-      for (UINT32 Byte = 0; Byte < Chunk; Byte++) {
-        UINT8 Val = (UINT8)((Word >> (8 * Byte)) & 0xFFU);
-        if (Keys->PadRxLen >= sizeof (Keys->PadRxBuf)) {
-          CopyMem (
-            Keys->PadRxBuf, Keys->PadRxBuf + 1, sizeof (Keys->PadRxBuf) - 1
-          );
-          Keys->PadRxLen = sizeof (Keys->PadRxBuf) - 1;
+      if (LastPartial && LastBytes) {
+        TotalBytes += LastBytes;
+      } else {
+        TotalBytes += 4U;
+      }
+      for (UINT32 WordIdx = 0; WordIdx < WordCnt; WordIdx++) {
+        UINT32 Word  = RegRead32 (Uart + 0x780);
+        UINT32 Chunk = (TotalBytes >= 4U) ? 4U : TotalBytes;
+        TotalBytes  -= Chunk;
+        for (UINT32 Byte = 0; Byte < Chunk; Byte++) {
+          UINT8 Val = (UINT8)((Word >> (8 * Byte)) & 0xFFU);
+          if (Keys->PadRxLen >= sizeof (Keys->PadRxBuf)) {
+            CopyMem (
+              Keys->PadRxBuf, Keys->PadRxBuf + 1, sizeof (Keys->PadRxBuf) - 1
+            );
+            Keys->PadRxLen = sizeof (Keys->PadRxBuf) - 1;
+          }
+          Keys->PadRxBuf[Keys->PadRxLen++] = Val;
         }
-        Keys->PadRxBuf[Keys->PadRxLen++] = Val;
       }
     }
-  }
-  if (SStatus) {
-    RegWrite32 (Uart + 0x648, SStatus);
+    if (SStatus) {
+      RegWrite32 (Uart + 0x648, SStatus);
+    }
+    if (WordCnt == 0) {
+      break;
+    }
   }
 }
 
@@ -553,74 +568,31 @@ PadUpdateStatus (
 )
 {
   UINT16 Btn;
-  INT16  Lx    = 0;
-  INT16  Rx    = 0;
-  INT16  BestX = 0;
-  INT16  Ly    = 0;
-  INT16  Ry    = 0;
-  INT16  BestY = 0;
 
   if (PayloadLen < 6) {
     return;
   }
   Btn = (UINT16)Frame[8] | ((UINT16)Frame[9] << 8);
-  if (PayloadLen >= 14) {
-    Lx    = (INT16)((UINT16)Frame[14] | ((UINT16)Frame[15] << 8));
-    Ly    = -(INT16)((UINT16)Frame[16] | ((UINT16)Frame[17] << 8));
-    Rx    = (INT16)((UINT16)Frame[18] | ((UINT16)Frame[19] << 8));
-    Ry    = -(INT16)((UINT16)Frame[20] | ((UINT16)Frame[21] << 8));
-    BestX = (Lx < -250 || Lx > 250) ? Lx : Rx;
-    BestY = (Ly < -250 || Ly > 250) ? Ly : Ry;
-  }
 
-  if (Keys->PadStickUp) {
-    if (BestY > -250) {
-      Keys->PadStickUp = FALSE;
+  // Only map the digital D-Pad directions (BIT(0)..BIT(3)), which are
+  // identical across all Retroid and AYN handhelds. Face buttons and analog
+  // sticks are intentionally ignored.
+  // [0] = INPUT_UP    (D-Pad Up,    BIT(0))
+  // [1] = INPUT_DOWN  (D-Pad Down,  BIT(1))
+  // [2] = INPUT_LEFT  (D-Pad Left,  BIT(2))
+  // [3] = INPUT_RIGHT (D-Pad Right, BIT(3))
+  Keys->PadLiveHeld[0] = (Btn & (1U << 0)) != 0;
+  Keys->PadLiveHeld[1] = (Btn & (1U << 1)) != 0;
+  Keys->PadLiveHeld[2] = (Btn & (1U << 2)) != 0;
+  Keys->PadLiveHeld[3] = (Btn & (1U << 3)) != 0;
+
+  if (!Keys->PadFirstFrameSeen) {
+    Keys->PadFirstFrameSeen = TRUE;
+    for (UINTN Index = 0; Index < 4; Index++) {
+      Keys->PadBtn[Index].HeldAtStart = Keys->PadLiveHeld[Index];
+      Keys->PadBtn[Index].PrevHeld    = Keys->PadLiveHeld[Index];
     }
-  } else if (BestY < -450) {
-    Keys->PadStickUp = TRUE;
   }
-
-  if (Keys->PadStickDown) {
-    if (BestY < 250) {
-      Keys->PadStickDown = FALSE;
-    }
-  } else if (BestY > 450) {
-    Keys->PadStickDown = TRUE;
-  }
-
-  if (Keys->PadStickLeft) {
-    if (BestX > -250) {
-      Keys->PadStickLeft = FALSE;
-    }
-  } else if (BestX < -450) {
-    Keys->PadStickLeft = TRUE;
-  }
-
-  if (Keys->PadStickRight) {
-    if (BestX < 250) {
-      Keys->PadStickRight = FALSE;
-    }
-  } else if (BestX > 450) {
-    Keys->PadStickRight = TRUE;
-  }
-
-  // PadHeldAtStart is unused here; store current held state in PadHeldAtStart
-  // slots as live state for PollGamepad:
-  // [0] = INPUT_UP     (D-Pad Up BIT(0) or Analog Stick Up)
-  // [1] = INPUT_DOWN   (D-Pad Down BIT(1) or Analog Stick Down)
-  // [2] = INPUT_LEFT   (D-Pad Left BIT(2) or Analog Stick Left)
-  // [3] = INPUT_RIGHT  (D-Pad Right BIT(3) or Analog Stick Right)
-  // [4] = INPUT_SELECT (BTN_SOUTH/East 'A' BIT(7) or BTN_START BIT(11))
-  // [5] = INPUT_BACK   (BTN_EAST/South 'B' BIT(6), BTN_WEST 'Y' BIT(5),
-  //                     BTN_SELECT BIT(10), or BTN_TL BIT(8))
-  Keys->PadHeldAtStart[0] = ((Btn & (1U << 0)) != 0) || Keys->PadStickUp;
-  Keys->PadHeldAtStart[1] = ((Btn & (1U << 1)) != 0) || Keys->PadStickDown;
-  Keys->PadHeldAtStart[2] = ((Btn & (1U << 2)) != 0) || Keys->PadStickLeft;
-  Keys->PadHeldAtStart[3] = ((Btn & (1U << 3)) != 0) || Keys->PadStickRight;
-  Keys->PadHeldAtStart[4] = (Btn & ((1U << 7) | (1U << 11))) != 0;
-  Keys->PadHeldAtStart[5] =
-    (Btn & ((1U << 6) | (1U << 5) | (1U << 10) | (1U << 8))) != 0;
 }
 
 STATIC VOID
@@ -671,7 +643,7 @@ STATIC VOID
 PollGamepad (
   IN OUT INPUT_KEYS *Keys,
   IN UINT64          Now,
-  OUT BOOLEAN        Held[6]
+  OUT BOOLEAN        Held[4]
 )
 {
   STATIC CONST UINT8 Cmd0701[]  = {0x07, 0x01};
@@ -681,7 +653,7 @@ PollGamepad (
                                    0x28, 0x00, 0x00, 0x00, 0x07};
   BOOLEAN            SawVersion = FALSE;
 
-  for (UINTN Index = 0; Index < 6; Index++) {
+  for (UINTN Index = 0; Index < 4; Index++) {
     Held[Index] = FALSE;
   }
 
@@ -702,14 +674,26 @@ PollGamepad (
     PadGpioOut (Board.BootGpio, TLMM_GPIO_LOW);
     PadGpioOut (Board.EnGpio, TLMM_GPIO_LOW);
     PadGpioOut (Board.RstGpio, TLMM_GPIO_LOW);
-    Keys->PadStep   = 1;
-    Keys->PadNextMs = Now + 80;
+    Keys->PadStep       = 1;
+    Keys->PadNextMs     = Now + 80;
+    Keys->PadLastPollMs = Now;
     return;
   }
 
   if (Keys->PadStep == 99 || !Keys->PadUartBase) {
     return;
   }
+
+  // If a synchronous command (such as scanning filesystems in FillEntries)
+  // blocked the main loop for > 80 ms, the 64-byte hardware RX FIFO may have
+  // filled and truncated a status frame. Drain and discard stale bytes so the
+  // next fresh MCU status frame parses cleanly without re-triggering.
+  if (Keys->PadActive && Keys->PadLastPollMs != 0 &&
+      Now > Keys->PadLastPollMs && Now - Keys->PadLastPollMs > 80) {
+    GeniUartDrainRx (Keys);
+    Keys->PadRxLen = 0;
+  }
+  Keys->PadLastPollMs = Now;
 
   GeniUartDrainRx (Keys);
   GamepadParseRx (Keys, &SawVersion);
@@ -796,8 +780,8 @@ PollGamepad (
   }
 
   if (Keys->PadActive) {
-    for (UINTN Index = 0; Index < 6; Index++) {
-      Held[Index] = Keys->PadHeldAtStart[Index];
+    for (UINTN Index = 0; Index < 4; Index++) {
+      Held[Index] = Keys->PadLiveHeld[Index];
     }
   }
 }
@@ -834,11 +818,21 @@ ReadKey (OUT INPUT *Out)
     if (Key.ScanCode != SCAN_NULL) {
       switch (Key.ScanCode) {
       case SCAN_UP:
+        *Out = INPUT_UP;
+        return TRUE;
       case SCAN_VOLUME_UP:
+        if (mPmicGpio && mHasVolUpGpio) {
+          continue;
+        }
         *Out = INPUT_UP;
         return TRUE;
       case SCAN_DOWN:
+        *Out = INPUT_DOWN;
+        return TRUE;
       case SCAN_VOLUME_DOWN:
+        if (mPwron) {
+          continue;
+        }
         *Out = INPUT_DOWN;
         return TRUE;
       case SCAN_LEFT:
@@ -852,6 +846,9 @@ ReadKey (OUT INPUT *Out)
         return TRUE;
       // Qualcomm keypad drivers report the power key as SCAN_SUSPEND.
       case SCAN_SUSPEND:
+        if (mPwron) {
+          continue;
+        }
         *Out = INPUT_SELECT;
         return TRUE;
       }
@@ -872,22 +869,82 @@ ReadKey (OUT INPUT *Out)
   }
 }
 
+#define BTN_RELEASE_DEBOUNCE_MS 80ULL
+
+STATIC BOOLEAN
+PollLevelButton (
+  IN OUT LEVEL_BTN *Btn,
+  IN BOOLEAN        Held,
+  IN INPUT          Key,
+  IN UINT64         Now,
+  OUT INPUT        *Out
+)
+{
+  UINT64 Tick = Now ? Now : 1;
+
+  if (Btn->HeldAtStart) {
+    if (!Held) {
+      if (Btn->ReleaseMs == 0) {
+        Btn->ReleaseMs = Tick;
+      } else if (Tick - Btn->ReleaseMs >= BTN_RELEASE_DEBOUNCE_MS) {
+        Btn->HeldAtStart = FALSE;
+        Btn->PrevHeld    = FALSE;
+        Btn->ReleaseMs   = 0;
+      }
+    } else {
+      Btn->ReleaseMs = 0;
+    }
+    return FALSE;
+  }
+
+  if (Held) {
+    Btn->ReleaseMs = 0;
+    if (!Btn->PrevHeld) {
+      Btn->PrevHeld    = TRUE;
+      Btn->HoldStartMs = Tick;
+      Btn->LastEmitMs  = Tick;
+      *Out             = Key;
+      return TRUE;
+    }
+    if ((Key == INPUT_UP || Key == INPUT_DOWN) &&
+        Tick - Btn->HoldStartMs >= KEY_REPEAT_DELAY_MS &&
+        Tick - Btn->LastEmitMs >= KEY_REPEAT_EVERY_MS) {
+      Btn->LastEmitMs = Tick;
+      *Out            = Key;
+      return TRUE;
+    }
+    return FALSE;
+  }
+
+  if (Btn->PrevHeld) {
+    if (Btn->ReleaseMs == 0) {
+      Btn->ReleaseMs = Tick;
+    } else if (Tick - Btn->ReleaseMs >= BTN_RELEASE_DEBOUNCE_MS) {
+      Btn->PrevHeld  = FALSE;
+      Btn->ReleaseMs = 0;
+    }
+  }
+  return FALSE;
+}
+
 BOOLEAN
 InputKeysHeldAtStart (IN OUT INPUT_KEYS *Keys)
 {
   INPUT   Key;
-  BOOLEAN Held = ReadKey (&Key);
+  BOOLEAN Held;
   BOOLEAN Hw[3];
 
+  PollHwButtons (Hw);
+  Held = ReadKey (&Key);
   // Drain any remaining buffered strokes (without calling ConIn->Reset,
   // which in Qualcomm's ButtonsDxe zeroes poll_count without clearing
   // boot_keys_latched).
   while (ReadKey (&Key)) {
   }
-  PollHwButtons (Hw);
   for (UINTN Index = 0; Index < 3; Index++) {
-    Keys->HwHeldAtStart[Index] = Hw[Index];
-    Keys->HwPrevHeld[Index]    = Hw[Index];
+    Keys->HwBtn[Index].HeldAtStart = Hw[Index];
+    Keys->HwBtn[Index].PrevHeld    = Hw[Index];
+    Keys->HwBtn[Index].ReleaseMs   = 0;
     if (Hw[Index]) {
       Held = TRUE;
     }
@@ -903,57 +960,35 @@ InputKeysPoll (
 )
 {
   STATIC CONST INPUT HwMap[3]  = {INPUT_UP, INPUT_DOWN, INPUT_SELECT};
-  STATIC CONST INPUT PadMap[6] = {INPUT_UP,    INPUT_DOWN,   INPUT_LEFT,
-                                  INPUT_RIGHT, INPUT_SELECT, INPUT_BACK};
-  INPUT              Key;
-  INPUT              Decoded;
-  BOOLEAN            Hw[3];
-  BOOLEAN            Pad[6];
-  BOOLEAN            Any = FALSE;
+  STATIC CONST INPUT PadMap[4] = {
+    INPUT_UP, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT
+  };
+  INPUT   Key;
+  INPUT   Decoded;
+  BOOLEAN Hw[3];
+  BOOLEAN Pad[4];
+  BOOLEAN AnyConIn = FALSE;
 
+  PollHwButtons (Hw);
   while (ReadKey (&Key)) {
-    Any = TRUE;
+    AnyConIn = TRUE;
     // The input is lost if memory runs out.
     if (KeysPress (&Keys->Decoder, Key, Now, &Decoded)) {
       (VOID)VecPush (Out, Decoded);
     }
   }
-  PollHwButtons (Hw);
+  if (!AnyConIn) {
+    KeysIdle (&Keys->Decoder, Now);
+  }
   for (UINTN Index = 0; Index < 3; Index++) {
-    if (Keys->HwHeldAtStart[Index]) {
-      if (!Hw[Index]) {
-        Keys->HwHeldAtStart[Index] = FALSE;
-        Keys->HwPrevHeld[Index]    = FALSE;
-      }
-      continue;
-    }
-    if (Keys->HwPrevHeld[Index] && !Hw[Index] &&
-        Keys->Decoder.Held && Keys->Decoder.Key == HwMap[Index]) {
-      Keys->Decoder.Held = FALSE;
-    }
-    Keys->HwPrevHeld[Index] = Hw[Index];
-    if (Hw[Index]) {
-      Any = TRUE;
-      if (KeysPress (&Keys->Decoder, HwMap[Index], Now, &Decoded)) {
-        (VOID)VecPush (Out, Decoded);
-      }
+    if (PollLevelButton (&Keys->HwBtn[Index], Hw[Index], HwMap[Index], Now, &Decoded)) {
+      (VOID)VecPush (Out, Decoded);
     }
   }
   PollGamepad (Keys, Now, Pad);
-  for (UINTN Index = 0; Index < 6; Index++) {
-    if (Keys->PadPrevHeld[Index] && !Pad[Index] &&
-        Keys->Decoder.Held && Keys->Decoder.Key == PadMap[Index]) {
-      Keys->Decoder.Held = FALSE;
+  for (UINTN Index = 0; Index < 4; Index++) {
+    if (PollLevelButton (&Keys->PadBtn[Index], Pad[Index], PadMap[Index], Now, &Decoded)) {
+      (VOID)VecPush (Out, Decoded);
     }
-    Keys->PadPrevHeld[Index] = Pad[Index];
-    if (Pad[Index]) {
-      Any = TRUE;
-      if (KeysPress (&Keys->Decoder, PadMap[Index], Now, &Decoded)) {
-        (VOID)VecPush (Out, Decoded);
-      }
-    }
-  }
-  if (!Any) {
-    KeysIdle (&Keys->Decoder, Now);
   }
 }
