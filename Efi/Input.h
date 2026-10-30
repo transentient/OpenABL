@@ -18,6 +18,7 @@
 #include "Base/OablBase.h"
 
 #include "Base/Buffer.h"
+#include "Core/DeviceTree.h"
 #include "Ui/Ui.h"
 
 typedef struct _LEVEL_BTN {
@@ -29,24 +30,22 @@ typedef struct _LEVEL_BTN {
 } LEVEL_BTN;
 
 typedef struct _INPUT_KEYS {
-  KEYS      Decoder;
-  LEVEL_BTN HwBtn[3];
-  LEVEL_BTN PadBtn[4];
-  BOOLEAN   PadFirstFrameSeen;
-  BOOLEAN   PadLiveHeld[4];
-  BOOLEAN   PadInitDone;
-  BOOLEAN   PadActive;
-  BOOLEAN   PadIsRetroid8250;
-  UINT8     PadStep;
-  UINT8     PadAttempts;
-  UINT8     PadSeq;
-  UINT16    PadEnGpio;
-  UINT16    PadRstGpio;
-  UINT64    PadUartBase;
-  UINT64    PadNextMs;
-  UINT64    PadLastPollMs;
-  UINTN     PadRxLen;
-  UINT8     PadRxBuf[256];
+  KEYS       Decoder;
+  LEVEL_BTN  HwBtn[3];
+  LEVEL_BTN  PadBtn[4];
+  BOOLEAN    PadConfigured;
+  DT_GAMEPAD PadConfig;
+  BOOLEAN    PadFirstFrameSeen;
+  BOOLEAN    PadLiveHeld[4];
+  BOOLEAN    PadInitDone;
+  BOOLEAN    PadActive;
+  UINT8      PadStep;
+  UINT8      PadAttempts;
+  UINT8      PadSeq;
+  UINT64     PadNextMs;
+  UINT64     PadLastPollMs;
+  UINTN      PadRxLen;
+  UINT8      PadRxBuf[256];
 } INPUT_KEYS;
 
 typedef struct _INPUT_EVENTS OABL_VEC (INPUT) INPUT_EVENTS;
@@ -56,6 +55,15 @@ InputKeysNew (VOID)
 {
   return (INPUT_KEYS){0};
 }
+
+// Enables or disables handheld gamepad polling using the UART and GPIO
+// configuration parsed from the active devicetree. Passing NULL disables
+// gamepad polling without touching any hardware registers or GPIOs.
+VOID
+InputKeysConfigureGamepad (
+  IN OUT INPUT_KEYS   *Keys,
+  IN CONST DT_GAMEPAD *Pad OPTIONAL
+);
 
 // Returns TRUE if Volume Down is currently held on the PMIC PON RESIN_N
 // line, used by Early() as a Fastboot escape hatch before running quirks.

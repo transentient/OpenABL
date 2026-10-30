@@ -62,29 +62,36 @@ typedef struct _PMIC_GPIO_PROTOCOL {
 
 // EFI_TLMM_PROTOCOL_GUID (DALTLMM.dll 0xa068): used to configure TLMM UART pins
 // and MCU enable/reset GPIOs for handheld UART gamepads.
-STATIC EFI_GUID mTlmmGuid = {
-  0xad9aec18,
-  0x7bf0,
-  0x4809,
-  {0x9e, 0x96, 0x30, 0x12, 0x30, 0x9f, 0x3d, 0xf7}};
+STATIC EFI_GUID mTlmmGuid = {0xad9aec18,
+                             0x7bf0,
+                             0x4809,
+                             {0x9e, 0x96, 0x30, 0x12, 0x30, 0x9f, 0x3d, 0xf7}};
 
 typedef struct _TLMM_PROTOCOL {
   UINT64 Revision;
-  EFI_STATUS (EFIAPI *ConfigGpio) (IN UINT32 Config, IN UINT32 Enable);
+  EFI_STATUS (EFIAPI *ConfigGpio) (
+    IN UINT32 Config,
+    IN UINT32 Enable
+  );
   VOID *ConfigGpioGroup;
-  EFI_STATUS (EFIAPI *GpioIn) (IN UINT32 Config, OUT UINT32 *Value);
-  EFI_STATUS (EFIAPI *GpioOut) (IN UINT32 Config, IN UINT32 Value);
+  EFI_STATUS (EFIAPI *GpioIn) (
+    IN UINT32   Config,
+    OUT UINT32 *Value
+  );
+  EFI_STATUS (EFIAPI *GpioOut) (
+    IN UINT32 Config,
+    IN UINT32 Value
+  );
 } TLMM_PROTOCOL;
 
-#define TLMM_GPIO_ENABLE   1U
-#define TLMM_GPIO_INPUT    0U
-#define TLMM_GPIO_OUTPUT   1U
-#define TLMM_GPIO_NO_PULL  0U
-#define TLMM_GPIO_PULL_UP  3U
-#define TLMM_GPIO_2MA      0U
-#define TLMM_GPIO_LOW      0U
-#define TLMM_GPIO_HIGH     1U
-#define PAD_NONE_GPIO      0xFFFFU
+#define TLMM_GPIO_ENABLE  1U
+#define TLMM_GPIO_INPUT   0U
+#define TLMM_GPIO_OUTPUT  1U
+#define TLMM_GPIO_NO_PULL 0U
+#define TLMM_GPIO_PULL_UP 3U
+#define TLMM_GPIO_2MA     0U
+#define TLMM_GPIO_LOW     0U
+#define TLMM_GPIO_HIGH    1U
 
 STATIC UINT32
 TlmmCfg (
@@ -185,22 +192,14 @@ InputVolumeDownHeld (VOID)
   return Held[1];
 }
 
-// Handheld UART Gamepad (SM8250 Retroid / SM8550 & SM8750 Moorechip rsinput)
+// Moorechip QUPv3 GENI UART handheld gamepad (configured from devicetree)
 
-typedef struct _PAD_BOARD {
-  UINT64  UartBase;
-  UINT64  VoteReg;
-  UINT32  VoteBits;
-  UINT64  RcgBase;
-  UINT16  TxGpio;
-  UINT16  RxGpio;
-  UINT8   UartFunc;
-  UINT16  VddGpio;
-  UINT16  BootGpio;
-  UINT16  EnGpio;
-  UINT16  RstGpio;
-  BOOLEAN IsRetroid8250;
-} PAD_BOARD;
+typedef struct _PAD_CLOCK {
+  UINT64 VoteReg;
+  UINT32 VoteBits;
+  UINT64 RcgBase;
+  UINT8  UartFunc;
+} PAD_CLOCK;
 
 STATIC inline UINT32
 RegRead32 (IN UINT64 Addr)
@@ -225,7 +224,7 @@ PadGpioOut (
 {
   UINT32 Cfg;
 
-  if (!mTlmm || Gpio == PAD_NONE_GPIO) {
+  if (!mTlmm || Gpio == DT_NO_GPIO) {
     return;
   }
   Cfg = TlmmCfg (Gpio, 0, TLMM_GPIO_OUTPUT, TLMM_GPIO_NO_PULL, TLMM_GPIO_2MA);
@@ -233,84 +232,62 @@ PadGpioOut (
   (VOID)mTlmm->GpioOut (Cfg, Value);
 }
 
+// Validates that the devicetree's UART base and TX/RX pins match a known QUPv3
+// serial engine on the running SoC before touching any GCC clock or TLMM
+// register.
 STATIC BOOLEAN
-GamepadBoardOf (OUT PAD_BOARD *Out)
+GamepadClockOf (
+  IN CONST DT_GAMEPAD *Pad,
+  OUT PAD_CLOCK       *Out
+)
 {
-  QCOM_CHIP                          Chip;
-  EFI_PLATFORMINFO_PLATFORM_INFO_TYPE Platform;
-  BOOLEAN                            HasPlat;
-  UINT32                             Id;
-  OABL_TEXT                          Name;
+  QCOM_CHIP Chip;
+  UINT32    Id;
+  OABL_TEXT Name;
 
   if (!QcomChip (&Chip)) {
     return FALSE;
   }
-  HasPlat = QcomPlatform (&Platform);
-  Id      = EFI_ERROR (Chip.Id.Status) ? 0 : Chip.Id.Value;
-  Name    = TextTrim (TextOf (Chip.Name));
+  Id   = EFI_ERROR (Chip.Id.Status) ? 0 : Chip.Id.Value;
+  Name = TextTrim (TextOf (Chip.Name));
 
-  // SM8250 Moorechip HDK (board-id 0x1f): Retroid Pocket 5 / Flip 2 / Mini /
-  // AYN Thor Lite (uart16 @ 0x00888000, QUP2 SE2). Non-Moorechip SM8250 boards
-  // (e.g. Mangmi Pocket Max, board-id 0x08 MTP) are skipped.
-  if ((Id == 356 || TextStartsWith (Name, "SM8250")) && HasPlat &&
-      (UINT32)Platform.platform == 0x1FU) {
-    *Out = (PAD_BOARD){
-      .UartBase      = 0x00888000ULL,
-      .VoteReg       = 0x00152010ULL,
-      .VoteBits      = 0x0000004FU,
-      .RcgBase       = 0x0011E270ULL,
-      .TxGpio        = 50,
-      .RxGpio        = 51,
-      .UartFunc      = 1,
-      .VddGpio       = 3,
-      .BootGpio      = 110,
-      .EnGpio        = 111,
-      .RstGpio       = 109,
-      .IsRetroid8250 = TRUE,
+  // SM8250 QUPv3_2 SE2 (uart16 @ 0x00888000, gpio50/51 func 1).
+  if ((Id == 356 || TextStartsWith (Name, "SM8250")) &&
+      Pad->UartBase == 0x00888000ULL && Pad->TxGpio == 50 &&
+      Pad->RxGpio == 51) {
+    *Out = (PAD_CLOCK){
+      .VoteReg  = 0x00152010ULL,
+      .VoteBits = 0x0000004FU,
+      .RcgBase  = 0x0011E270ULL,
+      .UartFunc = 1,
     };
     return TRUE;
   }
 
-  // SM8550 / QCS8550 Moorechip HDK (board-id 0x1f): RP6 / RP Nova / Odin 2 /
-  // Thor family (uart15 @ 0x0089C000, QUP2 SE7). Non-Moorechip SM8550/SG3x
-  // boards (e.g. Ayaneo Pocket S/DMG/EVO/ACE, board-id 0x0b QRD) are skipped.
+  // SM8550 / QCS8550 QUPv3_2 SE7 (uart15 @ 0x0089C000, gpio74/75 func 2).
   if ((Id == 601 || Id == 603 || Id == 519 || Id == 536 ||
        TextStartsWith (Name, "SM8550") || TextStartsWith (Name, "QCS8550")) &&
-      HasPlat && (UINT32)Platform.platform == 0x1FU) {
-    *Out = (PAD_BOARD){
-      .UartBase      = 0x0089C000ULL,
-      .VoteReg       = 0x00152010ULL,
-      .VoteBits      = 0x0002000FU,
-      .RcgBase       = 0x0011E898ULL,
-      .TxGpio        = 74,
-      .RxGpio        = 75,
-      .UartFunc      = 2,
-      .VddGpio       = 99,
-      .BootGpio      = PAD_NONE_GPIO,
-      .EnGpio        = 12,
-      .RstGpio       = PAD_NONE_GPIO,
-      .IsRetroid8250 = FALSE,
+      Pad->UartBase == 0x0089C000ULL && Pad->TxGpio == 74 &&
+      Pad->RxGpio == 75) {
+    *Out = (PAD_CLOCK){
+      .VoteReg  = 0x00152010ULL,
+      .VoteBits = 0x0002000FU,
+      .RcgBase  = 0x0011E898ULL,
+      .UartFunc = 2,
     };
     return TRUE;
   }
 
-  // SM8750 / CQ8725S: AYN Odin 3 family (uart15 @ 0x0089C000, QUP2 SE7).
-  if (Id == 706 || TextStartsWith (Name, "CQ8725S") ||
-      ((Id == 639 || Id == 618 || TextStartsWith (Name, "SM8750")) &&
-       HasPlat && (UINT32)Platform.platform == 0x1FU)) {
-    *Out = (PAD_BOARD){
-      .UartBase      = 0x0089C000ULL,
-      .VoteReg       = 0x00152010ULL,
-      .VoteBits      = 0x0002000FU,
-      .RcgBase       = 0x0011E8B8ULL,
-      .TxGpio        = 30,
-      .RxGpio        = 31,
-      .UartFunc      = 1,
-      .VddGpio       = 83,
-      .BootGpio      = PAD_NONE_GPIO,
-      .EnGpio        = 85,
-      .RstGpio       = PAD_NONE_GPIO,
-      .IsRetroid8250 = FALSE,
+  // SM8750 / CQ8725S QUPv3_2 SE7 (uart15 @ 0x0089C000, gpio30/31 func 1).
+  if ((Id == 706 || Id == 639 || Id == 618 ||
+       TextStartsWith (Name, "CQ8725S") || TextStartsWith (Name, "SM8750")) &&
+      Pad->UartBase == 0x0089C000ULL && Pad->TxGpio == 30 &&
+      Pad->RxGpio == 31) {
+    *Out = (PAD_CLOCK){
+      .VoteReg  = 0x00152010ULL,
+      .VoteBits = 0x0002000FU,
+      .RcgBase  = 0x0011E8B8ULL,
+      .UartFunc = 1,
     };
     return TRUE;
   }
@@ -353,9 +330,12 @@ GeniUartStop (IN UINT64 UartBase)
 }
 
 STATIC BOOLEAN
-GeniUartInit (IN CONST PAD_BOARD *Board)
+GeniUartInit (
+  IN CONST DT_GAMEPAD *Pad,
+  IN CONST PAD_CLOCK  *Clock
+)
 {
-  UINT64 Uart = Board->UartBase;
+  UINT64 Uart = Pad->UartBase;
   UINT32 FwRev;
 
   if (!mTlmm) {
@@ -363,17 +343,17 @@ GeniUartInit (IN CONST PAD_BOARD *Board)
   }
 
   // Enable QUPv3 wrapper + serial engine branch clocks in GCC.
-  RegWrite32 (Board->VoteReg, RegRead32 (Board->VoteReg) | Board->VoteBits);
+  RegWrite32 (Clock->VoteReg, RegRead32 (Clock->VoteReg) | Clock->VoteBits);
   gBS->Stall (100);
 
   // Configure RCG for 7,372,800 Hz (115200 * 64) from GPLL0_OUT_EVEN (300 MHz).
-  RegWrite32 (Board->RcgBase + 0x04, 0x00002601U);
-  RegWrite32 (Board->RcgBase + 0x08, 0x00000180U);
-  RegWrite32 (Board->RcgBase + 0x0C, 0x0000C476U);
-  RegWrite32 (Board->RcgBase + 0x10, 0x0000C2F6U);
-  RegWrite32 (Board->RcgBase + 0x00, RegRead32 (Board->RcgBase + 0x00) | 0x1U);
+  RegWrite32 (Clock->RcgBase + 0x04, 0x00002601U);
+  RegWrite32 (Clock->RcgBase + 0x08, 0x00000180U);
+  RegWrite32 (Clock->RcgBase + 0x0C, 0x0000C476U);
+  RegWrite32 (Clock->RcgBase + 0x10, 0x0000C2F6U);
+  RegWrite32 (Clock->RcgBase + 0x00, RegRead32 (Clock->RcgBase + 0x00) | 0x1U);
   for (UINTN Spin = 0; Spin < 100; Spin++) {
-    if ((RegRead32 (Board->RcgBase + 0x00) & 0x1U) == 0) {
+    if ((RegRead32 (Clock->RcgBase + 0x00) & 0x1U) == 0) {
       break;
     }
     gBS->Stall (10);
@@ -388,14 +368,14 @@ GeniUartInit (IN CONST PAD_BOARD *Board)
   // Route TX and RX pins to the QUPv3 serial engine in TLMM.
   (VOID)mTlmm->ConfigGpio (
     TlmmCfg (
-      Board->TxGpio, Board->UartFunc, TLMM_GPIO_OUTPUT, TLMM_GPIO_PULL_UP,
+      Pad->TxGpio, Clock->UartFunc, TLMM_GPIO_OUTPUT, TLMM_GPIO_PULL_UP,
       TLMM_GPIO_2MA
     ),
     TLMM_GPIO_ENABLE
   );
   (VOID)mTlmm->ConfigGpio (
     TlmmCfg (
-      Board->RxGpio, Board->UartFunc, TLMM_GPIO_INPUT, TLMM_GPIO_PULL_UP,
+      Pad->RxGpio, Clock->UartFunc, TLMM_GPIO_INPUT, TLMM_GPIO_PULL_UP,
       TLMM_GPIO_2MA
     ),
     TLMM_GPIO_ENABLE
@@ -493,13 +473,13 @@ PadSendCmd (
     Checksum ^= Frame[Index];
   }
   Frame[Len++] = Checksum;
-  GeniUartTx (Keys->PadUartBase, Frame, Len);
+  GeniUartTx (Keys->PadConfig.UartBase, Frame, Len);
 }
 
 STATIC VOID
 GeniUartDrainRx (IN OUT INPUT_KEYS *Keys)
 {
-  UINT64 Uart = Keys->PadUartBase;
+  UINT64 Uart = Keys->PadConfig.UartBase;
   UINT32 SStatus;
   UINT32 FifoStatus;
   UINT32 WordCnt;
@@ -524,7 +504,7 @@ GeniUartDrainRx (IN OUT INPUT_KEYS *Keys)
       for (UINT32 WordIdx = 0; WordIdx < WordCnt; WordIdx++) {
         UINT32 Word  = RegRead32 (Uart + 0x780);
         UINT32 Chunk = (TotalBytes >= 4U) ? 4U : TotalBytes;
-        TotalBytes  -= Chunk;
+        TotalBytes -= Chunk;
         for (UINT32 Byte = 0; Byte < Chunk; Byte++) {
           UINT8 Val = (UINT8)((Word >> (8 * Byte)) & 0xFFU);
           if (Keys->PadRxLen >= sizeof (Keys->PadRxBuf)) {
@@ -657,30 +637,31 @@ PollGamepad (
     Held[Index] = FALSE;
   }
 
+  if (!Keys->PadConfigured) {
+    return;
+  }
+
   if (!Keys->PadInitDone) {
-    PAD_BOARD Board;
+    PAD_CLOCK Clock;
 
     InitHwButtons ();
     Keys->PadInitDone = TRUE;
-    if (!GamepadBoardOf (&Board) || !GeniUartInit (&Board)) {
+    if (!GamepadClockOf (&Keys->PadConfig, &Clock) ||
+        !GeniUartInit (&Keys->PadConfig, &Clock)) {
       Keys->PadStep = 99;
       return;
     }
-    Keys->PadUartBase      = Board.UartBase;
-    Keys->PadEnGpio        = Board.EnGpio;
-    Keys->PadRstGpio       = Board.RstGpio;
-    Keys->PadIsRetroid8250 = Board.IsRetroid8250;
-    PadGpioOut (Board.VddGpio, TLMM_GPIO_HIGH);
-    PadGpioOut (Board.BootGpio, TLMM_GPIO_LOW);
-    PadGpioOut (Board.EnGpio, TLMM_GPIO_LOW);
-    PadGpioOut (Board.RstGpio, TLMM_GPIO_LOW);
+    PadGpioOut (Keys->PadConfig.VddGpio, TLMM_GPIO_HIGH);
+    PadGpioOut (Keys->PadConfig.BootGpio, TLMM_GPIO_LOW);
+    PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
+    PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_LOW);
     Keys->PadStep       = 1;
     Keys->PadNextMs     = Now + 80;
     Keys->PadLastPollMs = Now;
     return;
   }
 
-  if (Keys->PadStep == 99 || !Keys->PadUartBase) {
+  if (Keys->PadStep == 99 || !Keys->PadConfig.UartBase) {
     return;
   }
 
@@ -701,11 +682,11 @@ PollGamepad (
   switch (Keys->PadStep) {
   case 1:
     if (Now >= Keys->PadNextMs) {
-      PadGpioOut (Keys->PadEnGpio, TLMM_GPIO_HIGH);
-      PadGpioOut (Keys->PadRstGpio, TLMM_GPIO_HIGH);
+      PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_HIGH);
+      PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_HIGH);
       Keys->PadRxLen  = 0;
-      Keys->PadStep   = Keys->PadIsRetroid8250 ? 10 : 2;
-      Keys->PadNextMs = Now + (Keys->PadIsRetroid8250 ? 100 : 60);
+      Keys->PadStep   = Keys->PadConfig.IsRetroid8250 ? 10 : 2;
+      Keys->PadNextMs = Now + (Keys->PadConfig.IsRetroid8250 ? 100 : 60);
     }
     break;
   case 2:
@@ -723,8 +704,8 @@ PollGamepad (
       Keys->PadStep   = 20;
     } else if (Now >= Keys->PadNextMs) {
       if (++Keys->PadAttempts < 3) {
-        PadGpioOut (Keys->PadEnGpio, TLMM_GPIO_LOW);
-        PadGpioOut (Keys->PadRstGpio, TLMM_GPIO_LOW);
+        PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
+        PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_LOW);
         Keys->PadStep   = 1;
         Keys->PadNextMs = Now + 80;
       } else {
@@ -789,16 +770,47 @@ PollGamepad (
 VOID
 InputKeysClose (IN OUT INPUT_KEYS *Keys)
 {
-  if (!Keys->PadInitDone || !Keys->PadUartBase) {
+  if (!Keys->PadInitDone || Keys->PadStep == 99 || !Keys->PadConfig.UartBase) {
     return;
   }
-  PadGpioOut (Keys->PadEnGpio, TLMM_GPIO_LOW);
-  PadGpioOut (Keys->PadRstGpio, TLMM_GPIO_LOW);
+  PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
+  PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_LOW);
   gBS->Stall (1000);
-  GeniUartStop (Keys->PadUartBase);
-  Keys->PadActive   = FALSE;
-  Keys->PadUartBase = 0;
-  Keys->PadStep     = 99;
+  GeniUartStop (Keys->PadConfig.UartBase);
+  Keys->PadActive = FALSE;
+  Keys->PadStep   = 99;
+}
+
+VOID
+InputKeysConfigureGamepad (
+  IN OUT INPUT_KEYS   *Keys,
+  IN CONST DT_GAMEPAD *Pad OPTIONAL
+)
+{
+  if (!Pad) {
+    InputKeysClose (Keys);
+    Keys->PadConfigured = FALSE;
+    Keys->PadConfig     = (DT_GAMEPAD){0};
+    Keys->PadInitDone   = FALSE;
+    return;
+  }
+  if (Keys->PadConfigured &&
+      CompareMem (&Keys->PadConfig, Pad, sizeof (*Pad)) == 0) {
+    return;
+  }
+  InputKeysClose (Keys);
+  Keys->PadConfigured     = TRUE;
+  Keys->PadConfig         = *Pad;
+  Keys->PadInitDone       = FALSE;
+  Keys->PadActive         = FALSE;
+  Keys->PadFirstFrameSeen = FALSE;
+  Keys->PadStep           = 0;
+  Keys->PadAttempts       = 0;
+  Keys->PadRxLen          = 0;
+  for (UINTN Index = 0; Index < 4; Index++) {
+    Keys->PadLiveHeld[Index] = FALSE;
+    Keys->PadBtn[Index]      = (LEVEL_BTN){0};
+  }
 }
 
 // Reads the next key the UI uses, skipping others. Returns FALSE when none
@@ -960,14 +972,13 @@ InputKeysPoll (
 )
 {
   STATIC CONST INPUT HwMap[3]  = {INPUT_UP, INPUT_DOWN, INPUT_SELECT};
-  STATIC CONST INPUT PadMap[4] = {
-    INPUT_UP, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT
-  };
-  INPUT   Key;
-  INPUT   Decoded;
-  BOOLEAN Hw[3];
-  BOOLEAN Pad[4];
-  BOOLEAN AnyConIn = FALSE;
+  STATIC CONST INPUT PadMap[4] = {INPUT_UP, INPUT_DOWN, INPUT_LEFT,
+                                  INPUT_RIGHT};
+  INPUT              Key;
+  INPUT              Decoded;
+  BOOLEAN            Hw[3];
+  BOOLEAN            Pad[4];
+  BOOLEAN            AnyConIn = FALSE;
 
   PollHwButtons (Hw);
   while (ReadKey (&Key)) {
@@ -981,13 +992,17 @@ InputKeysPoll (
     KeysIdle (&Keys->Decoder, Now);
   }
   for (UINTN Index = 0; Index < 3; Index++) {
-    if (PollLevelButton (&Keys->HwBtn[Index], Hw[Index], HwMap[Index], Now, &Decoded)) {
+    if (PollLevelButton (
+          &Keys->HwBtn[Index], Hw[Index], HwMap[Index], Now, &Decoded
+        )) {
       (VOID)VecPush (Out, Decoded);
     }
   }
   PollGamepad (Keys, Now, Pad);
   for (UINTN Index = 0; Index < 4; Index++) {
-    if (PollLevelButton (&Keys->PadBtn[Index], Pad[Index], PadMap[Index], Now, &Decoded)) {
+    if (PollLevelButton (
+          &Keys->PadBtn[Index], Pad[Index], PadMap[Index], Now, &Decoded
+        )) {
       (VOID)VecPush (Out, Decoded);
     }
   }
