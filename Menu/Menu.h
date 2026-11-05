@@ -180,6 +180,11 @@ MenuBootVolumes (
   OUT UINTN                  *Count
 );
 
+// Infers the panel rotation from the allowed drives' devicetrees when no
+// cached ModelRotation is stored yet.
+UINT16
+MenuInferModelRotation (IN CONST MENU_BOOT_CONTEXT *Ctx);
+
 // Draws the boot splash over the firmware's logo.
 VOID
 MenuBootSplash (

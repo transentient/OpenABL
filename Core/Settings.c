@@ -23,6 +23,7 @@ SettingsDefault (OUT SETTINGS *Settings)
     .BootSource    = BOOT_SOURCE_AUTO,
     .Rotation      = ROTATION_AUTO,
     .ModelRotation = ROTATION_NONE,
+    .CustomLogo    = TRUE,
   };
 }
 

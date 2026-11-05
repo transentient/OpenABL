@@ -295,6 +295,55 @@ GamepadClockOf (
   return FALSE;
 }
 
+// Built-in fallback UART gamepad configurations for SoCs where all supported
+// handhelds share a single MCU UART wiring, so the D-Pad works even before a
+// boot medium is scanned or when no SD card is inserted.
+STATIC BOOLEAN
+DefaultGamepadForChip (OUT DT_GAMEPAD *Out)
+{
+  QCOM_CHIP Chip;
+  UINT32    Id;
+  OABL_TEXT Name;
+
+  if (!QcomChip (&Chip)) {
+    return FALSE;
+  }
+  Id   = EFI_ERROR (Chip.Id.Status) ? 0 : Chip.Id.Value;
+  Name = TextTrim (TextOf (Chip.Name));
+
+  // AYN Odin 3 (CQ8725S / SM8750): QUPv3_2 SE7 uart15 @ 0x0089C000.
+  if (Id == 706 || TextStartsWith (Name, "CQ8725S")) {
+    *Out = (DT_GAMEPAD){
+      .UartBase      = 0x0089C000ULL,
+      .TxGpio        = 30,
+      .RxGpio        = 31,
+      .VddGpio       = 83,
+      .BootGpio      = DT_NO_GPIO,
+      .EnGpio        = 85,
+      .RstGpio       = DT_NO_GPIO,
+      .IsRetroid8250 = FALSE,
+    };
+    return TRUE;
+  }
+
+  // Retroid Pocket 5 / Flip 2 / Mini (SM8250): QUPv3_2 SE2 uart16 @ 0x00888000.
+  if (Id == 356 || TextStartsWith (Name, "SM8250")) {
+    *Out = (DT_GAMEPAD){
+      .UartBase      = 0x00888000ULL,
+      .TxGpio        = 50,
+      .RxGpio        = 51,
+      .VddGpio       = 3,
+      .BootGpio      = 110,
+      .EnGpio        = 111,
+      .RstGpio       = 109,
+      .IsRetroid8250 = TRUE,
+    };
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
 STATIC VOID
 GeniUartStop (IN UINT64 UartBase)
 {
@@ -385,6 +434,8 @@ GeniUartInit (
 
   // Configure FIFO mode, 4x8-bit byte packing, and 115200 8N1 (div=4, 16x).
   RegWrite32 (Uart + 0x000, 0x0U);
+  RegWrite32 (Uart + 0x2004, 0x0U);
+  RegWrite32 (Uart + 0x2008, 0x0U);
   RegWrite32 (Uart + 0x028, RegRead32 (Uart + 0x028) | 0x7FU);
   RegWrite32 (Uart + 0x020, 0x1U);
   RegWrite32 (Uart + 0x024, 0x7FU);
@@ -490,7 +541,7 @@ GeniUartDrainRx (IN OUT INPUT_KEYS *Keys)
   for (UINTN Pass = 0; Pass < 8; Pass++) {
     SStatus    = RegRead32 (Uart + 0x640);
     FifoStatus = RegRead32 (Uart + 0x804);
-    WordCnt    = FifoStatus & 0x01FFFFFFU;
+    WordCnt    = FifoStatus & 0x3FU;
     if (WordCnt > 0) {
       BOOLEAN LastPartial = (FifoStatus & 0x80000000U) != 0;
       UINT32  LastBytes   = (FifoStatus >> 28) & 0x7U;
@@ -638,7 +689,13 @@ PollGamepad (
   }
 
   if (!Keys->PadConfigured) {
-    return;
+    DT_GAMEPAD DefaultPad;
+
+    if (!DefaultGamepadForChip (&DefaultPad)) {
+      return;
+    }
+    Keys->PadConfigured = TRUE;
+    Keys->PadConfig     = DefaultPad;
   }
 
   if (!Keys->PadInitDone) {
@@ -686,7 +743,7 @@ PollGamepad (
       PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_HIGH);
       Keys->PadRxLen  = 0;
       Keys->PadStep   = Keys->PadConfig.IsRetroid8250 ? 10 : 2;
-      Keys->PadNextMs = Now + (Keys->PadConfig.IsRetroid8250 ? 100 : 60);
+      Keys->PadNextMs = Now + (Keys->PadConfig.IsRetroid8250 ? 150 : 200);
     }
     break;
   case 2:
@@ -694,14 +751,19 @@ PollGamepad (
       Keys->PadRxLen = 0;
       PadSendCmd (Keys, 0x01, CmdVer, sizeof (CmdVer));
       Keys->PadStep   = 3;
-      Keys->PadNextMs = Now + 400;
+      Keys->PadNextMs = Now + 80;
     }
     break;
   case 3:
-    if (SawVersion || Keys->PadActive) {
+    if (SawVersion || Keys->PadActive || Now >= Keys->PadNextMs) {
       PadSendCmd (Keys, 0x01, CmdPar, sizeof (CmdPar));
-      Keys->PadActive = TRUE;
-      Keys->PadStep   = 20;
+      Keys->PadStep   = 4;
+      Keys->PadNextMs = Now + 400;
+    }
+    break;
+  case 4:
+    if (Keys->PadActive) {
+      Keys->PadStep = 20;
     } else if (Now >= Keys->PadNextMs) {
       if (++Keys->PadAttempts < 3) {
         PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
@@ -751,8 +813,8 @@ PollGamepad (
   case 15:
     if (Now >= Keys->PadNextMs) {
       PadSendCmd (Keys, 0x01, CmdVer, sizeof (CmdVer));
-      Keys->PadActive = TRUE;
-      Keys->PadStep   = 20;
+      Keys->PadStep   = 4;
+      Keys->PadNextMs = Now + 400;
     }
     break;
   case 20:
@@ -787,6 +849,11 @@ InputKeysConfigureGamepad (
   IN CONST DT_GAMEPAD *Pad OPTIONAL
 )
 {
+  DT_GAMEPAD Fallback;
+
+  if (!Pad && DefaultGamepadForChip (&Fallback)) {
+    Pad = &Fallback;
+  }
   if (!Pad) {
     InputKeysClose (Keys);
     Keys->PadConfigured = FALSE;
@@ -830,8 +897,6 @@ ReadKey (OUT INPUT *Out)
     if (Key.ScanCode != SCAN_NULL) {
       switch (Key.ScanCode) {
       case SCAN_UP:
-        *Out = INPUT_UP;
-        return TRUE;
       case SCAN_VOLUME_UP:
         if (mPmicGpio && mHasVolUpGpio) {
           continue;
@@ -839,8 +904,6 @@ ReadKey (OUT INPUT *Out)
         *Out = INPUT_UP;
         return TRUE;
       case SCAN_DOWN:
-        *Out = INPUT_DOWN;
-        return TRUE;
       case SCAN_VOLUME_DOWN:
         if (mPwron) {
           continue;

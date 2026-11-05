@@ -672,6 +672,51 @@ RotationOfModel (IN CONST SCANNED_MODEL *Model OPTIONAL)
   return Model && Model->HasRotation ? Model->Rotation : ROTATION_NONE;
 }
 
+STATIC UINT16
+CommonRotationOfModels (IN CONST SCANNED_MODELS *Found)
+{
+  if (!Found->Count || !Found->Items[0].HasRotation) {
+    return ROTATION_NONE;
+  }
+  for (UINTN Index = 1; Index < Found->Count; Index++) {
+    if (!Found->Items[Index].HasRotation ||
+        Found->Items[Index].Rotation != Found->Items[0].Rotation) {
+      return ROTATION_NONE;
+    }
+  }
+  return Found->Items[0].Rotation;
+}
+
+UINT16
+MenuInferModelRotation (IN CONST MENU_BOOT_CONTEXT *Ctx)
+{
+  VOLUMES_HANDLE_LIST Drives = {0};
+  SCANNED_MODELS      Found  = {0};
+  UINT16              Rot    = ROTATION_NONE;
+
+  QuirksPrepareStorage (QuirksChipId (), gMenuEfiLog);
+  VolumesAllowed (
+    Ctx->Source, Ctx->CfwOnInternal, Ctx->AltVolumeBoot, &Drives
+  );
+  ModelsScan (Drives.Items, Drives.Count, gMenuEfiLog, &Found);
+  if (!Found.Count && Ctx->Source != BOOT_SOURCE_AUTO) {
+    VecFree (&Drives);
+    Drives = (VOLUMES_HANDLE_LIST){0};
+    VolumesAllowed (
+      BOOT_SOURCE_AUTO, Ctx->CfwOnInternal, Ctx->AltVolumeBoot, &Drives
+    );
+    ModelsScan (Drives.Items, Drives.Count, gMenuEfiLog, &Found);
+  }
+  if (Ctx->Model[0]) {
+    Rot = RotationOfModel (ModelNamed (&Found, Ctx->Model));
+  } else {
+    Rot = CommonRotationOfModels (&Found);
+  }
+  ModelsFree (&Found);
+  VecFree (&Drives);
+  return Rot;
+}
+
 // Configures the handheld UART gamepad from the selected model's devicetree,
 // or from the drive's devicetrees when all scanned models share the same
 // gamepad configuration.
@@ -724,8 +769,16 @@ LearnModelRotation (IN OUT MENU_STATE *M)
     InputKeysConfigureGamepad (&mKeys, NULL);
     return;
   }
+  if (!Found.Count && M->Stored.BootSource != BOOT_SOURCE_AUTO) {
+    VOLUMES_HANDLE_LIST Drives = {0};
+
+    VolumesAllowed (BOOT_SOURCE_AUTO, M->Caps.CfwOnInternal, FALSE, &Drives);
+    ModelsScan (Drives.Items, Drives.Count, gMenuEfiLog, &Found);
+    VecFree (&Drives);
+  }
   ApplyModelsGamepad (&Found, M->Stored.Model);
   if (!M->Stored.Model[0]) {
+    M->Stored.ModelRotation = CommonRotationOfModels (&Found);
     ModelsFree (&Found);
     return;
   }

@@ -24,6 +24,11 @@
 #include "View/Text.h"
 #include "microui.h"
 
+#if __has_include("View/OpenAblWordmarkArt.h")
+#include "View/OpenAblWordmarkArt.h"
+#define HAVE_OPENABL_WORDMARK_ART 1
+#endif
+
 extern CONST UINT8 gOablAssetFontCjk[];
 extern CONST UINTN gOablAssetFontCjkSize;
 
@@ -763,12 +768,30 @@ RowItem (
 
 // Header and footer
 
+#ifdef HAVE_OPENABL_WORDMARK_ART
+STATIC INT32
+WordmarkScale (IN float Size)
+{
+  return Imax ((INT32)RoundF (ToPx (Size) * 2.0f / (float)OpenAblWordmark_H), 1);
+}
+
+STATIC float
+WordmarkHeight (IN float Size)
+{
+  return (float)(OpenAblWordmark_H * WordmarkScale (Size));
+}
+#endif
+
 // Returns the width of the "OpenABL" wordmark at Size.
 STATIC float
 WordmarkWidth (IN float Size)
 {
+#ifdef HAVE_OPENABL_WORDMARK_ART
+  return (float)(OpenAblWordmark_W * WordmarkScale (Size));
+#else
   return Measure ("Open", Size, FONT_WEIGHT_MEDIUM) +
          Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
+#endif
 }
 
 // Draws the "OpenABL" wordmark from X, its capitals centred on Cy: "Open"
@@ -780,6 +803,38 @@ Wordmark (
   IN float Size
 )
 {
+#ifdef HAVE_OPENABL_WORDMARK_ART
+  INT32 Scale = WordmarkScale (Size);
+  INT32 X0    = (INT32)RoundF (X);
+  INT32 Y0    = (INT32)RoundF (Cy - (float)(OpenAblWordmark_H * Scale) / 2.0f);
+  INT32 Px    = 0;
+  INT32 Py    = 0;
+
+  for (UINTN Off = 0; Off + 1 < OpenAblWordmark_RLE_SIZE; Off += 2) {
+    UINT32 Rem   = gOpenAblWordmarkRle[Off];
+    UINT32 Argb  = gOpenAblWordmarkPalette[gOpenAblWordmarkRle[Off + 1]];
+    UINT32 Rgb   = Argb & 0xFFFFFFU;
+    UINT8  Alpha = (UINT8)(Argb >> 24);
+    while (Rem > 0 && Py < OpenAblWordmark_H) {
+      UINT32 Span = (UINT32)(OpenAblWordmark_W - Px);
+      if (Span > Rem) {
+        Span = Rem;
+      }
+      if (Alpha >= 128) {
+        Fill (
+          Rect (X0 + Px * Scale, Y0 + Py * Scale, (INT32)Span * Scale, Scale),
+          Rgb, Alpha
+        );
+      }
+      Px += (INT32)Span;
+      if (Px >= OpenAblWordmark_W) {
+        Px = 0;
+        Py++;
+      }
+      Rem -= Span;
+    }
+  }
+#else
   float OpenW = Measure ("Open", Size, FONT_WEIGHT_MEDIUM);
   float AblW  = Measure ("ABL", Size, FONT_WEIGHT_MEDIUM);
   float H     = ToPx (Size) * 2;
@@ -792,6 +847,7 @@ Wordmark (
     Rectf (X + OpenW, Cy - H / 2, AblW + ToPx (2), H), "ABL", Size,
     FONT_WEIGHT_MEDIUM, THEME_BRAND, ALIGN_LEFT
   );
+#endif
 }
 
 // The wordmark and the version in a chip at the right.
@@ -801,7 +857,7 @@ HeaderDraw (IN CONST APP *A)
   RECT  R           = mView.Header;
   CHAR8 Version[48] = "v";
 
-  Wordmark ((float)R.X, CenterY (R), 20);
+  Wordmark ((float)R.X, CenterY (R), 33.5f);
   AsciiStrAppend (Version, sizeof (Version), A->Version);
   float ChipW = Measure (Version, 12.5f, FONT_WEIGHT_REGULAR) + ToPx (20);
   float ChipH = ToPx (24);
@@ -1222,7 +1278,7 @@ MenuDraw (IN OUT APP *A)
     Headers[Index] = Rows[Index].Header != NULL;
     Heights[Index] = ToPxInt (Headers[Index] ? 22 : 30);
   }
-  ListInit (&List, Area, ToPxInt (14), Count, Heights, Headers);
+  ListInit (&List, Area, ToPxInt (11), Count, Heights, Headers);
   ListPlace (&List, Focus, &A->Menu.Scroll);
   for (UINTN Index = List.First; Index < List.End; Index++) {
     RECT Row = ListRow (&List, Index);
@@ -1684,13 +1740,22 @@ STATIC VOID
 BootingDraw (IN CONST APP *A)
 {
   float        Cx   = CenterX (mView.Body);
+#ifdef HAVE_OPENABL_WORDMARK_ART
+  float        CapH = WordmarkHeight (30);
+  float        Y    = CenterY (mView.Body) - CapH / 2 - ToPx (36);
+#else
   float        CapH = FontCapHeight (ToPx (40));
   float        Y    = CenterY (mView.Body) - ToPx (60);
+#endif
   CHAR8        What[160];
   CHAR8        Detail[ENTRY_DETAIL_SIZE];
   CONST CHAR8 *Title = AppBootTitle (A);
 
+#ifdef HAVE_OPENABL_WORDMARK_ART
+  Wordmark (Cx - WordmarkWidth (30) / 2, Y + CapH / 2, 30);
+#else
   Wordmark (Cx - WordmarkWidth (40) / 2, Y + CapH / 2, 40);
+#endif
   Y += CapH + ToPx (18);
   if (A->Settings.BootMode == BOOT_MODE_ANDROID) {
     AsciiStrCopy (What, sizeof (What), gStrings->StartingAndroid);
@@ -1996,9 +2061,9 @@ Layout (IN CONST APP *A)
   INT32 Gap;
 
   mView.Unit = (float)Imin (mView.W, mView.H) / 360.0f;
-  Gap        = ToPxInt (10);
-  Area       = Inset (Full, ToPxInt (14));
-  TakeTop (Area, ToPxInt (36), &mView.Header, &Rest);
+  Gap        = ToPxInt (6);
+  Area       = Inset (Full, ToPxInt (10));
+  TakeTop (Area, ToPxInt (70), &mView.Header, &Rest);
   Rest = Rect (Rest.X, Rest.Y + Gap, Rest.W, Rest.H - Gap);
   TakeBottom (Rest, ToPxInt (26), &mView.Body, &mView.Footer);
   mView.Body.H -= Gap;

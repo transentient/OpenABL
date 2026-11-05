@@ -22,6 +22,7 @@
 #include "Efi/Display.h"
 #include "Efi/Files.h"
 #include "Efi/Qcom.h"
+#include "Efi/Quirks.h"
 
 #if __has_include("Menu/OpenAblSplashArt.h")
 #include "Menu/OpenAblSplashArt.h"
@@ -389,18 +390,21 @@ MenuBootSplash (
     return;
   }
   DisplaySize (&Splash.Display, &PanelW, &PanelH);
-  // Rotate as the menu would: the model's rotation or the tall panel
-  // default, plus the firmware's own rotation.
-  if (Ctx->ModelRotation == ROTATION_NONE && PanelH > PanelW) {
-    PanelRotation = 270;
-  } else if (Ctx->Rotation == ROTATION_AUTO) {
-    PanelRotation =
-      (Ctx->ModelRotation == ROTATION_NONE ? 0 : Ctx->ModelRotation) % 360;
+  // Rotate as the menu would: an explicit user rotation wins, otherwise use
+  // the model's rotation or the tall panel default plus the firmware's own
+  // rotation.
+  if (Ctx->Rotation != ROTATION_AUTO) {
+    Splash.Degrees = Ctx->Rotation % 360;
   } else {
-    PanelRotation = Ctx->Rotation % 360;
+    if (Ctx->ModelRotation == ROTATION_NONE && PanelH > PanelW) {
+      PanelRotation = (QuirksChipId () == 618 || PanelH < 1600) ? 90 : 270;
+    } else {
+      PanelRotation =
+        (Ctx->ModelRotation == ROTATION_NONE ? 0 : Ctx->ModelRotation) % 360;
+    }
+    QcomFirmwarePanelRotation (PanelW, PanelH, &FirmwareRotation);
+    Splash.Degrees = (UINT16)((PanelRotation + FirmwareRotation) % 360);
   }
-  QcomFirmwarePanelRotation (PanelW, PanelH, &FirmwareRotation);
-  Splash.Degrees = (UINT16)((PanelRotation + FirmwareRotation) % 360);
   LogicalSize (
     (UINT32)PanelW, (UINT32)PanelH, Splash.Degrees, &LogicalW, &LogicalH
   );
@@ -451,8 +455,8 @@ MenuBootSplash (
   );
 #ifdef HAVE_OPENABL_SPLASH_ART
   {
-    INT32 ScaleX = Splash.Canvas.W / OpenAblSplash_W;
-    INT32 ScaleY = Splash.Canvas.H / OpenAblSplash_H;
+    INT32 ScaleX = (Splash.Canvas.W * 3 / 5) / OpenAblSplash_W;
+    INT32 ScaleY = (Splash.Canvas.H * 3 / 5) / OpenAblSplash_H;
     INT32 Scale  = ScaleX < ScaleY ? ScaleX : ScaleY;
     INT32 X0, Y0, X = 0, Y = 0;
     if (Scale < 1) {
@@ -470,7 +474,7 @@ MenuBootSplash (
         if (Span > Rem) {
           Span = Rem;
         }
-        if (Alpha >= 128 && Rgb != 0x000000U) {
+        if (Alpha >= 128) {
           FillRect (
             &Splash.Canvas, X0 + X * Scale, Y0 + Y * Scale,
             (INT32)Span * Scale, Scale, Rgb, 255

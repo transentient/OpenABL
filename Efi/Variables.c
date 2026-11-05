@@ -401,20 +401,21 @@ VariablesRestoreFromDevinfo (IN LOG_SINK Log)
   if (!DevInfoParse (Raw.Data, Raw.Len, &Parsed)) {
     goto Done;
   }
-  if (!SettingsStoreUnpack (DevinfoValueOf, &Parsed, Vars)) {
-    goto Done;
-  }
-  for (UINTN Index = 0; Index < SETTINGS_STORE_VARS; Index++) {
-    if (VariablesPut (Vars[Index].Name, Vars[Index].Value, Vars[Index].Len) ==
-          EFI_SUCCESS &&
-        Vars[Index].Len) {
-      Set++;
+  if (SettingsStoreUnpack (DevinfoValueOf, &Parsed, Vars)) {
+    for (UINTN Index = 0; Index < SETTINGS_STORE_VARS; Index++) {
+      if (VariablesPut (Vars[Index].Name, Vars[Index].Value, Vars[Index].Len) ==
+            EFI_SUCCESS &&
+          Vars[Index].Len) {
+        Set++;
+      }
     }
   }
   if (DevInfoValue (&Parsed, "BootMode", &LegacyBm) && LegacyBm.Len >= 1 &&
       LegacyBm.Ptr[0] <= 1) {
     UINT8 Bm = LegacyBm.Ptr[0];
-    VariablesPut (SETTINGS_KEY_BOOT_MODE, &Bm, 1);
+    if (VariablesPut (SETTINGS_KEY_BOOT_MODE, &Bm, 1) == EFI_SUCCESS) {
+      Set++;
+    }
     (VOID)VariablesPersistToDevinfo ();
   }
   LogPrint (

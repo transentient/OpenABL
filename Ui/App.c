@@ -165,7 +165,11 @@ AppDesiredRotation (IN CONST APP *A)
     return SettingsEffectiveRotation (Settings);
   }
   if (Settings->ModelRotation == ROTATION_NONE && A->PhysicalH > A->PhysicalW) {
-    Panel = 270;
+    OABL_TEXT Soc = TextOf (A->Info.Soc);
+    Panel = (TextFind (Soc, "8 Elite", NULL) || TextFind (Soc, "8750", NULL) ||
+             A->PhysicalH < 1600)
+              ? 90
+              : 270;
   } else {
     Panel = SettingsEffectiveRotation (Settings);
   }

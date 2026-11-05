@@ -45,6 +45,30 @@ BOOLEAN   gFastbootUp;
 BOOLEAN   gUsbLive;
 BOOLEAN   gEarlyFastboot;
 
+#define SPLASH_MIN_HOLD_MS 2000ULL
+STATIC UINT64 gSplashShownMs;
+
+STATIC VOID
+HoldSplashMinimum (VOID)
+{
+  UINT64 Now;
+  UINT64 Elapsed;
+
+  if (!gSplashShownMs) {
+    return;
+  }
+  Now = ClockNowMs ();
+  if (Now > gSplashShownMs) {
+    Elapsed = Now - gSplashShownMs;
+  } else {
+    Elapsed = 0;
+  }
+  if (Elapsed < SPLASH_MIN_HOLD_MS) {
+    gBS->Stall ((UINTN)(SPLASH_MIN_HOLD_MS - Elapsed) * 1000ULL);
+  }
+  gSplashShownMs = 0;
+}
+
 VOID
 MenuLog (
   IN CONST CHAR8 *Fmt,
@@ -120,6 +144,9 @@ BootContextOf (
   MenuLoadPrefs (
     Settings.Model, &Ctx->Rotation, &Ctx->ModelRotation, &Settings.Language
   );
+  if (Ctx->ModelRotation == ROTATION_NONE) {
+    Ctx->ModelRotation = MenuInferModelRotation (Ctx);
+  }
   AsciiStrCopy (Ctx->Version, sizeof (Ctx->Version), MENU_VERSION);
   if (State.Version[0]) {
     CHAR8 *Version = MenuHostText (State.Version, sizeof (State.Version));
@@ -166,6 +193,7 @@ HandoverBefore (
     .Version       = Ctx->Version,
   };
 
+  HoldSplashMinimum ();
   HandoverPrepare (&Prepare, gMenuEfiLog);
 }
 
@@ -457,10 +485,10 @@ BootWithImage (
     return EFI_NOT_READY;
   }
   Files = FilesHost (&Ctx);
-  // Draw our splash only with "Custom boot logo" on. Otherwise the
-  // manufacturer's logo stays up.
-  if (MenuVarIs (SETTINGS_KEY_CUSTOM_LOGO, 1)) {
+  // Draw our splash unless "Custom boot logo" was explicitly turned off.
+  if (!MenuVarIs (SETTINGS_KEY_CUSTOM_LOGO, 0)) {
     MenuBootSplash (Host, &Ctx);
+    gSplashShownMs = ClockNowMs ();
   } else {
     MenuLog ("splash: the manufacturer's logo kept (Custom boot logo is off)");
   }
@@ -673,6 +701,7 @@ LinuxBoot (
     Result = Status == EFI_SUCCESS ? MENU_START_RESULT_RETURNED
                                    : MENU_START_RESULT_NOTHING;
   } else {
+    HoldSplashMinimum ();
     Result = BootImageStart (Host, &Image, Model, gMenuEfiLog, &Refused) ==
                  BOOT_IMAGE_NOT_STARTED_NO_MODEL
                ? MENU_START_RESULT_NO_MODEL

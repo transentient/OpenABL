@@ -126,10 +126,11 @@ BootSourceAllows (
   return FALSE;
 }
 
-// Sorts internal drives first. The elements are indices into Context, the
-// media array.
+// Sorts external SD drives before internal drives in AUTO mode so a bootable
+// SD card takes precedence over an existing internal install, while falling
+// back to internal storage when no bootable SD card is inserted.
 STATIC BOOLEAN
-InternalFirst (
+ExternalFirst (
   IN CONST VOID *A,
   IN CONST VOID *B,
   IN VOID       *Context
@@ -137,8 +138,8 @@ InternalFirst (
 {
   CONST BOOT_SOURCE_MEDIUM *Media = Context;
 
-  return BootSourceMediumInternal (Media[*(CONST UINTN *)A]) &&
-         !BootSourceMediumInternal (Media[*(CONST UINTN *)B]);
+  return !BootSourceMediumInternal (Media[*(CONST UINTN *)A]) &&
+         BootSourceMediumInternal (Media[*(CONST UINTN *)B]);
 }
 
 UINTN
@@ -158,7 +159,7 @@ BootSourceSelect (
     Order[Index] = Index;
   }
   if (Source == BOOT_SOURCE_AUTO && !AltVolumeBoot) {
-    SortBy (Order, Count, sizeof (*Order), InternalFirst, (VOID *)Media);
+    SortBy (Order, Count, sizeof (*Order), ExternalFirst, (VOID *)Media);
   }
   for (UINTN Index = 0; Index < Count; Index++) {
     if (BootSourceAllows (Source, AltVolumeBoot, Media[Order[Index]])) {
