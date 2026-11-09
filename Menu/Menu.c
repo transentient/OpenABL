@@ -1614,7 +1614,6 @@ NowMs (VOID)
   return (UINT32)ClockNowMs ();
 }
 
-// Commands waiting to run, oldest first.
 typedef struct _PENDING_COMMANDS {
   COMMAND Items[8];
   UINTN   Count;
@@ -1753,15 +1752,19 @@ MenuRun (
   // Ignore a key still held from opening the menu.
   InputKeysHeldAtStart (&mKeys);
   ViewRotate (Rotation);
-  mApp.Dirty = TRUE;
+  ViewSync (&mApp);
+  ViewRun ();
+  mApp.Dirty = FALSE;
 
   for (;;) {
     UINT64       Now = ClockNowMs ();
     UINT64       Until;
     INPUT_EVENTS Events = {0};
+    BOOLEAN      HadInput;
     UINT16       Want;
 
     InputKeysPoll (&mKeys, Now, &Events);
+    HadInput = Events.Count > 0;
     // Once an uninstall waits to restart into recovery, keys and timers do
     // nothing, so its settings can't be changed back before the wipe.
     for (UINTN Index = 0; Index < Events.Count && !M.RestartAt; Index++) {
@@ -1783,8 +1786,10 @@ MenuRun (
     }
     if (mApp.Dirty) {
       ViewSync (&mApp);
+      ViewRun ();
+    } else {
+      ViewRun ();
     }
-    ViewRun ();
     if (M.RestartAt && ClockNowMs () >= M.RestartAt) {
       MenuLog ("restarting into recovery");
       MenuFlush ();
@@ -1804,7 +1809,7 @@ MenuRun (
     }
     // Give idle time to fastboot. The ABL serves one USB event per poll,
     // and a download needs polls back to back.
-    Until = ClockNowMs () + 8;
+    Until = HadInput ? 0 : ClockNowMs () + 2;
     for (;;) {
       Status = MenuHostPoll (&M.Host);
       if (Status != EFI_SUCCESS) {

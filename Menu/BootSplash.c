@@ -396,13 +396,21 @@ MenuBootSplash (
   if (Ctx->Rotation != ROTATION_AUTO) {
     Splash.Degrees = Ctx->Rotation % 360;
   } else {
+    QcomFirmwarePanelRotation (PanelW, PanelH, &FirmwareRotation);
     if (Ctx->ModelRotation == ROTATION_NONE && PanelH > PanelW) {
-      PanelRotation = (QuirksChipId () == 618 || PanelH < 1600) ? 90 : 270;
+      UINT32 ChipId = QuirksChipId ();
+      PanelRotation = (ChipId == 706 || ChipId == 639 || ChipId == 618 ||
+                       ChipId == 356 || PanelH < 1600)
+                        ? 90
+                        : 270;
     } else {
       PanelRotation =
         (Ctx->ModelRotation == ROTATION_NONE ? 0 : Ctx->ModelRotation) % 360;
+      if (QuirksChipId () == 356 && PanelH >= 1600 && FirmwareRotation == 0 &&
+          PanelRotation != 0) {
+        PanelRotation = (UINT16)((360 - PanelRotation) % 360);
+      }
     }
-    QcomFirmwarePanelRotation (PanelW, PanelH, &FirmwareRotation);
     Splash.Degrees = (UINT16)((PanelRotation + FirmwareRotation) % 360);
   }
   LogicalSize (

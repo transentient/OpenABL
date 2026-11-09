@@ -99,6 +99,8 @@ $(MICROUI_OBJ): $(MICROUI)/src/microui.c
 	@mkdir -p $(@D)
 	@$(CC) $(BASE_FLAGS) -w -c $< -o $@
 
+$(OBJ)/$(VARIANT)/View/%.o $(OBJ)/$(VARIANT)/Gfx/%.o: OWN_FLAGS += -O2
+
 $(OBJ)/$(VARIANT)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(OWN_FLAGS) -c $< -o $@

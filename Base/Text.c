@@ -111,9 +111,9 @@ TextEndsWith (
 
 BOOLEAN
 TextFind (
-  IN OABL_TEXT    Text,
-  IN CONST CHAR8 *Needle,
-  OUT UINTN      *At
+  IN OABL_TEXT     Text,
+  IN CONST CHAR8  *Needle,
+  OUT UINTN       *At OPTIONAL
 )
 {
   UINTN Length = AsciiStrLen (Needle);
@@ -124,7 +124,9 @@ TextFind (
     if (TextEq (
           (OABL_TEXT){Text.Ptr + Index, Length}, (OABL_TEXT){Needle, Length}
         )) {
-      *At = Index;
+      if (At) {
+        *At = Index;
+      }
       return TRUE;
     }
   }
@@ -135,12 +137,14 @@ BOOLEAN
 TextFindChar (
   IN OABL_TEXT Text,
   IN CHAR8     Char,
-  OUT UINTN   *At
+  OUT UINTN   *At OPTIONAL
 )
 {
   for (UINTN Index = 0; Index < Text.Len; Index++) {
     if (Text.Ptr[Index] == Char) {
-      *At = Index;
+      if (At) {
+        *At = Index;
+      }
       return TRUE;
     }
   }
@@ -151,12 +155,14 @@ BOOLEAN
 TextFindLastChar (
   IN OABL_TEXT Text,
   IN CHAR8     Char,
-  OUT UINTN   *At
+  OUT UINTN   *At OPTIONAL
 )
 {
   for (UINTN Index = Text.Len; Index--;) {
     if (Text.Ptr[Index] == Char) {
-      *At = Index;
+      if (At) {
+        *At = Index;
+      }
       return TRUE;
     }
   }

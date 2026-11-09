@@ -159,19 +159,25 @@ UINT16
 AppDesiredRotation (IN CONST APP *A)
 {
   CONST SETTINGS *Settings = &A->Settings;
-  UINT16          Panel;
+  OABL_TEXT       Soc      = TextOf (A->Info.Soc);
+  BOOLEAN         IsSm8250 =
+    TextContains (Soc, "865") || TextContains (Soc, "8250");
+  UINT16 Panel;
 
   if (Settings->Rotation != ROTATION_AUTO) {
     return SettingsEffectiveRotation (Settings);
   }
   if (Settings->ModelRotation == ROTATION_NONE && A->PhysicalH > A->PhysicalW) {
-    OABL_TEXT Soc = TextOf (A->Info.Soc);
-    Panel = (TextFind (Soc, "8 Elite", NULL) || TextFind (Soc, "8750", NULL) ||
-             A->PhysicalH < 1600)
+    Panel = (TextContains (Soc, "8 Elite") || TextContains (Soc, "8750") ||
+             IsSm8250 || A->PhysicalH < 1600)
               ? 90
               : 270;
   } else {
     Panel = SettingsEffectiveRotation (Settings);
+    if (IsSm8250 && A->PhysicalH >= 1600 && A->FirmwareRotation == 0 &&
+        Panel != 0) {
+      Panel = (UINT16)((360 - Panel) % 360);
+    }
   }
   return (UINT16)((Panel + A->FirmwareRotation) % 360);
 }

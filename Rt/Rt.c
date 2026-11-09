@@ -30,8 +30,16 @@ memcpy (
 {
   uint8_t       *D = Dst;
   const uint8_t *S = Src;
+  if (((uintptr_t)D & 7U) == 0 && ((uintptr_t)S & 7U) == 0) {
+    while (N >= 8U) {
+      *(volatile uint64_t *)D = *(const volatile uint64_t *)S;
+      D += 8;
+      S += 8;
+      N -= 8;
+    }
+  }
   while (N--) {
-    *D++ = *S++;
+    *(volatile uint8_t *)D++ = *(const volatile uint8_t *)S++;
   }
   return Dst;
 }
@@ -46,12 +54,26 @@ memmove (
   uint8_t       *D = Dst;
   const uint8_t *S = Src;
   if (D < S) {
-    while (N--) {
-      *D++ = *S++;
+    if (((uintptr_t)D & 7U) == 0 && ((uintptr_t)S & 7U) == 0) {
+      while (N >= 8U) {
+        *(volatile uint64_t *)D = *(const volatile uint64_t *)S;
+        D += 8;
+        S += 8;
+        N -= 8;
+      }
     }
-  } else {
     while (N--) {
-      D[N] = S[N];
+      *(volatile uint8_t *)D++ = *(const volatile uint8_t *)S++;
+    }
+  } else if (D > S) {
+    if ((((uintptr_t)D + N) & 7U) == 0 && (((uintptr_t)S + N) & 7U) == 0) {
+      while (N >= 8U) {
+        N -= 8;
+        *(volatile uint64_t *)(D + N) = *(const volatile uint64_t *)(S + N);
+      }
+    }
+    while (N--) {
+      ((volatile uint8_t *)D)[N] = ((const volatile uint8_t *)S)[N];
     }
   }
   return Dst;
@@ -65,8 +87,17 @@ memset (
 )
 {
   uint8_t *D = Dst;
+  uint8_t  B = (uint8_t)C;
+  if (((uintptr_t)D & 7U) == 0 && N >= 8U) {
+    uint64_t W = (uint64_t)B * 0x0101010101010101ULL;
+    while (N >= 8U) {
+      *(volatile uint64_t *)D = W;
+      D += 8;
+      N -= 8;
+    }
+  }
   while (N--) {
-    *D++ = (uint8_t)C;
+    *(volatile uint8_t *)D++ = B;
   }
   return Dst;
 }

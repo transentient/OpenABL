@@ -913,12 +913,12 @@ STATIC CONST struct {
   // SM8550 and below.
   {"ABOOT FV", EfiBootServicesCode, FALSE},
   {"MPSS EFS", EfiBootServicesData, FALSE},
-  {"Log Buffer", EfiBootServicesData, TRUE},
   // Not "Display Reserved": it holds the splash, and freeing it gains little.
+  // Not "Log Buffer": keeping the 32 KiB UEFI serial log reserved lets Linux
+  // inspect XBL/OpenABL logs via /dev/mem.
   {"XBL Ramdump", EfiBootServicesData, TRUE},
   // SM8650 and up (UEFI_FD and FV_Region aren't freed without device
   // testing).
-  {"Log_Buffer", EfiBootServicesData, TRUE},
   {"XBL_Ramdump", EfiBootServicesData, TRUE},
 };
 

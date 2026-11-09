@@ -84,12 +84,58 @@ typedef struct _TLMM_PROTOCOL {
   );
 } TLMM_PROTOCOL;
 
+// EFI_CLOCK_PROTOCOL_GUID (ClockDxe.dll 0x1e068): used to enable the QUPv3
+// wrapper and serial engine clocks, vote for VDD_CX and GPLL0_OUT_EVEN, and
+// verify CBCR.CLK_OFF == 0 before accessing any QUPv3 MMIO register.
+STATIC EFI_GUID mClockGuid = {0x241afae6,
+                              0x885f,
+                              0x4f6c,
+                              {0xa7, 0xea, 0xc2, 0x8e, 0xab, 0x79, 0xc3, 0xe5}};
+
+#define CLOCK_FREQUENCY_HZ_CLOSEST 2U
+
+typedef struct _CLOCK_PROTOCOL CLOCK_PROTOCOL;
+struct _CLOCK_PROTOCOL {
+  UINT64 Version;
+  EFI_STATUS (EFIAPI *GetClockID) (
+    IN CLOCK_PROTOCOL *This,
+    IN CONST CHAR8    *ClockName,
+    OUT UINTN         *ClockId
+  );
+  EFI_STATUS (EFIAPI *EnableClock) (
+    IN CLOCK_PROTOCOL *This,
+    IN UINTN           ClockId
+  );
+  EFI_STATUS (EFIAPI *DisableClock) (
+    IN CLOCK_PROTOCOL *This,
+    IN UINTN           ClockId
+  );
+  EFI_STATUS (EFIAPI *IsClockEnabled) (
+    IN CLOCK_PROTOCOL *This,
+    IN UINTN           ClockId,
+    OUT BOOLEAN       *IsEnabled
+  );
+  EFI_STATUS (EFIAPI *IsClockOn) (
+    IN CLOCK_PROTOCOL *This,
+    IN UINTN           ClockId,
+    OUT BOOLEAN       *IsOn
+  );
+  EFI_STATUS (EFIAPI *SetClockFreqHz) (
+    IN CLOCK_PROTOCOL *This,
+    IN UINTN           ClockId,
+    IN UINT32          FreqHz,
+    IN UINT32          Match,
+    OUT UINT32        *ResultFreqHz
+  );
+};
+
 #define TLMM_GPIO_ENABLE  1U
 #define TLMM_GPIO_INPUT   0U
 #define TLMM_GPIO_OUTPUT  1U
 #define TLMM_GPIO_NO_PULL 0U
 #define TLMM_GPIO_PULL_UP 3U
 #define TLMM_GPIO_2MA     0U
+#define TLMM_GPIO_16MA    7U
 #define TLMM_GPIO_LOW     0U
 #define TLMM_GPIO_HIGH    1U
 
@@ -111,6 +157,7 @@ STATIC BOOLEAN              mHwInit;
 STATIC PMIC_PWRON_PROTOCOL *mPwron;
 STATIC PMIC_GPIO_PROTOCOL  *mPmicGpio;
 STATIC TLMM_PROTOCOL       *mTlmm;
+STATIC CLOCK_PROTOCOL      *mClock;
 STATIC UINT32               mVolUpPmic;
 STATIC BOOLEAN              mHasVolUpGpio;
 
@@ -140,6 +187,7 @@ InitHwButtons (VOID)
   mPwron    = OpenFirst (&mPmicPwronGuid);
   mPmicGpio = OpenFirst (&mPmicGpioGuid);
   mTlmm     = OpenFirst (&mTlmmGuid);
+  mClock    = OpenFirst (&mClockGuid);
   Count     = QcomPmics (Pmics);
   if (Count > 0 && Pmics[0].PmicModel == EFI_PMIC_IS_PM8150) {
     mVolUpPmic    = 0;
@@ -195,10 +243,11 @@ InputVolumeDownHeld (VOID)
 // Moorechip QUPv3 GENI UART handheld gamepad (configured from devicetree)
 
 typedef struct _PAD_CLOCK {
-  UINT64 VoteReg;
-  UINT32 VoteBits;
-  UINT64 RcgBase;
-  UINT8  UartFunc;
+  CONST CHAR8 *SeClockName;
+  UINT64       VoteReg;
+  UINT32       VoteBits;
+  UINT64       RcgBase;
+  UINT8        UartFunc;
 } PAD_CLOCK;
 
 STATIC inline UINT32
@@ -256,24 +305,26 @@ GamepadClockOf (
       Pad->UartBase == 0x00888000ULL && Pad->TxGpio == 50 &&
       Pad->RxGpio == 51) {
     *Out = (PAD_CLOCK){
-      .VoteReg  = 0x00152010ULL,
-      .VoteBits = 0x0000004FU,
-      .RcgBase  = 0x0011E270ULL,
-      .UartFunc = 1,
+      .SeClockName = "gcc_qupv3_wrap2_s2_clk",
+      .VoteReg     = 0x00152010ULL,
+      .VoteBits    = (1U << 6) | (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3),
+      .RcgBase     = 0x0011E270ULL,
+      .UartFunc    = 1,
     };
     return TRUE;
   }
 
   // SM8550 / QCS8550 QUPv3_2 SE7 (uart15 @ 0x0089C000, gpio74/75 func 2).
   if ((Id == 601 || Id == 603 || Id == 519 || Id == 536 ||
-       TextStartsWith (Name, "SM8550") || TextStartsWith (Name, "QCS8550")) &&
+      TextStartsWith (Name, "SM8550") || TextStartsWith (Name, "QCS8550")) &&
       Pad->UartBase == 0x0089C000ULL && Pad->TxGpio == 74 &&
       Pad->RxGpio == 75) {
     *Out = (PAD_CLOCK){
-      .VoteReg  = 0x00152010ULL,
-      .VoteBits = 0x0002000FU,
-      .RcgBase  = 0x0011E898ULL,
-      .UartFunc = 2,
+      .SeClockName = "gcc_qupv3_wrap2_s7_clk",
+      .VoteReg     = 0x0017D010ULL,
+      .VoteBits    = (1U << 11) | (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3),
+      .RcgBase     = 0x0011E8A0ULL,
+      .UartFunc    = 2,
     };
     return TRUE;
   }
@@ -284,9 +335,10 @@ GamepadClockOf (
       Pad->UartBase == 0x0089C000ULL && Pad->TxGpio == 30 &&
       Pad->RxGpio == 31) {
     *Out = (PAD_CLOCK){
-      .VoteReg  = 0x00152010ULL,
-      .VoteBits = 0x0002000FU,
-      .RcgBase  = 0x0011E8B8ULL,
+      .SeClockName = "gcc_qupv3_wrap2_s7_clk",
+      .VoteReg     = 0x0017D00CULL,
+      .VoteBits = (1U << 16) | (1U << 9) | (1U << 10) | (1U << 11) | (1U << 12),
+      .RcgBase  = 0x0011E908ULL,
       .UartFunc = 1,
     };
     return TRUE;
@@ -312,7 +364,8 @@ DefaultGamepadForChip (OUT DT_GAMEPAD *Out)
   Name = TextTrim (TextOf (Chip.Name));
 
   // AYN Odin 3 (CQ8725S / SM8750): QUPv3_2 SE7 uart15 @ 0x0089C000.
-  if (Id == 706 || TextStartsWith (Name, "CQ8725S")) {
+  if (Id == 706 || Id == 639 || Id == 618 ||
+      TextStartsWith (Name, "CQ8725S") || TextStartsWith (Name, "SM8750")) {
     *Out = (DT_GAMEPAD){
       .UartBase      = 0x0089C000ULL,
       .TxGpio        = 30,
@@ -345,10 +398,18 @@ DefaultGamepadForChip (OUT DT_GAMEPAD *Out)
 }
 
 STATIC VOID
+GeniUartDrainRxFifoWords (IN UINT64 UartBase)
+{
+  UINT32 FifoWords = RegRead32 (UartBase + 0x804) & 0x1FFFFFFU;
+
+  while (FifoWords--) {
+    (VOID)RegRead32 (UartBase + 0x780);
+  }
+}
+
+STATIC VOID
 GeniUartStop (IN UINT64 UartBase)
 {
-  UINT32 FifoWords;
-
   if (!UartBase) {
     return;
   }
@@ -356,24 +417,53 @@ GeniUartStop (IN UINT64 UartBase)
   RegWrite32 (UartBase + 0x644, 0);
   if (RegRead32 (UartBase + 0x040) & 0x1000U) {
     RegWrite32 (UartBase + 0x634, 0x4U);
-    gBS->Stall (200);
+    for (UINTN Spin = 0; Spin < 1000; Spin++) {
+      UINT32 SStatus = RegRead32 (UartBase + 0x640);
+      if (SStatus & 0x08000000U) {
+        RegWrite32 (UartBase + 0x648, 0x08000000U);
+        GeniUartDrainRxFifoWords (UartBase);
+      }
+      if (SStatus & 0x10U) {
+        RegWrite32 (UartBase + 0x648, SStatus);
+        break;
+      }
+      gBS->Stall (10);
+    }
     if (RegRead32 (UartBase + 0x040) & 0x1000U) {
       RegWrite32 (UartBase + 0x634, 0x2U);
-      gBS->Stall (200);
+      for (UINTN Spin = 0; Spin < 1000; Spin++) {
+        UINT32 SStatus = RegRead32 (UartBase + 0x640);
+        if (SStatus & 0x20U) {
+          RegWrite32 (UartBase + 0x648, SStatus);
+          break;
+        }
+        gBS->Stall (10);
+      }
     }
   }
   if (RegRead32 (UartBase + 0x040) & 0x1U) {
     RegWrite32 (UartBase + 0x604, 0x4U);
-    gBS->Stall (200);
+    for (UINTN Spin = 0; Spin < 1000; Spin++) {
+      UINT32 MStatus = RegRead32 (UartBase + 0x610);
+      if (MStatus & 0x10U) {
+        RegWrite32 (UartBase + 0x618, MStatus);
+        break;
+      }
+      gBS->Stall (10);
+    }
     if (RegRead32 (UartBase + 0x040) & 0x1U) {
       RegWrite32 (UartBase + 0x604, 0x2U);
-      gBS->Stall (200);
+      for (UINTN Spin = 0; Spin < 1000; Spin++) {
+        UINT32 MStatus = RegRead32 (UartBase + 0x610);
+        if (MStatus & 0x20U) {
+          RegWrite32 (UartBase + 0x618, MStatus);
+          break;
+        }
+        gBS->Stall (10);
+      }
     }
   }
-  FifoWords = RegRead32 (UartBase + 0x804) & 0x3FU;
-  while (FifoWords--) {
-    (VOID)RegRead32 (UartBase + 0x780);
-  }
+  GeniUartDrainRxFifoWords (UartBase);
   RegWrite32 (UartBase + 0x618, 0xFFFFFFFFU);
   RegWrite32 (UartBase + 0x648, 0xFFFFFFFFU);
 }
@@ -384,29 +474,57 @@ GeniUartInit (
   IN CONST PAD_CLOCK  *Clock
 )
 {
+  STATIC CONST CHAR8 *CONST WrapClocks[] = {
+    "gcc_qupv3_wrap_2_m_ahb_clk",
+    "gcc_qupv3_wrap_2_s_ahb_clk",
+  };
   UINT64 Uart = Pad->UartBase;
   UINT32 FwRev;
+  UINT32 RxFifoDepth;
+  UINT8  UartDrv    = Pad->IsRetroid8250 ? TLMM_GPIO_16MA : TLMM_GPIO_2MA;
+  UINTN  ClockId    = 0;
+  UINT32 ResultFreq = 0;
 
-  if (!mTlmm) {
+  if (!mTlmm || !Clock || !Clock->VoteReg || !Clock->RcgBase) {
     return FALSE;
   }
 
-  // Enable QUPv3 wrapper + serial engine branch clocks in GCC.
-  RegWrite32 (Clock->VoteReg, RegRead32 (Clock->VoteReg) | Clock->VoteBits);
-  gBS->Stall (100);
+  // Best-effort ClockDxe enable so ClockDxe votes for VDD_CX and GPLL0_OUT_EVEN
+  // when available, followed by direct GCC vote + RCG programming.
+  if (mClock) {
+    for (UINTN Index = 0; Index < ARRAY_SIZE (WrapClocks); Index++) {
+      if (!EFI_ERROR (mClock->GetClockID (mClock, WrapClocks[Index], &ClockId))) {
+        (VOID)mClock->EnableClock (mClock, ClockId);
+      }
+    }
+    if (Clock->SeClockName &&
+        !EFI_ERROR (mClock->GetClockID (mClock, Clock->SeClockName, &ClockId))) {
+      (VOID)mClock->SetClockFreqHz (
+        mClock, ClockId, 7372800U, CLOCK_FREQUENCY_HZ_CLOSEST, &ResultFreq
+      );
+      (VOID)mClock->EnableClock (mClock, ClockId);
+    }
+  }
 
-  // Configure RCG for 7,372,800 Hz (115200 * 64) from GPLL0_OUT_EVEN (300 MHz).
+  // Vote for QUPv3 wrapper AHB/core clocks and serial engine branch clock.
+  RegWrite32 (Clock->VoteReg, RegRead32 (Clock->VoteReg) | Clock->VoteBits);
+  gBS->Stall (50);
+
+  // Configure RCG for 7,372,800 Hz (115200 * 64) from GPLL0_OUT_EVEN (300 MHz):
+  // CFG = 0x2601 (MND dual-edge, src=GPLL0_OUT_EVEN, div=1),
+  // M = 0x0180 (384), N = 0xC476 (~(15625 - 384)), D = 0xC2F6 (~15625).
   RegWrite32 (Clock->RcgBase + 0x04, 0x00002601U);
   RegWrite32 (Clock->RcgBase + 0x08, 0x00000180U);
   RegWrite32 (Clock->RcgBase + 0x0C, 0x0000C476U);
   RegWrite32 (Clock->RcgBase + 0x10, 0x0000C2F6U);
   RegWrite32 (Clock->RcgBase + 0x00, RegRead32 (Clock->RcgBase + 0x00) | 0x1U);
-  for (UINTN Spin = 0; Spin < 100; Spin++) {
+  for (UINTN Spin = 0; Spin < 500; Spin++) {
     if ((RegRead32 (Clock->RcgBase + 0x00) & 0x1U) == 0) {
       break;
     }
     gBS->Stall (10);
   }
+  gBS->Stall (50);
 
   // Verify TZ loaded GENI_SE_UART (protocol 2) into this serial engine.
   FwRev = RegRead32 (Uart + 0x068);
@@ -418,14 +536,14 @@ GeniUartInit (
   (VOID)mTlmm->ConfigGpio (
     TlmmCfg (
       Pad->TxGpio, Clock->UartFunc, TLMM_GPIO_OUTPUT, TLMM_GPIO_PULL_UP,
-      TLMM_GPIO_2MA
+      UartDrv
     ),
     TLMM_GPIO_ENABLE
   );
   (VOID)mTlmm->ConfigGpio (
     TlmmCfg (
       Pad->RxGpio, Clock->UartFunc, TLMM_GPIO_INPUT, TLMM_GPIO_PULL_UP,
-      TLMM_GPIO_2MA
+      UartDrv
     ),
     TLMM_GPIO_ENABLE
   );
@@ -433,14 +551,27 @@ GeniUartInit (
   GeniUartStop (Uart);
 
   // Configure FIFO mode, 4x8-bit byte packing, and 115200 8N1 (div=4, 16x).
-  RegWrite32 (Uart + 0x000, 0x0U);
-  RegWrite32 (Uart + 0x2004, 0x0U);
-  RegWrite32 (Uart + 0x2008, 0x0U);
+  // Note: Do NOT write Uart + 0x000 (SE_GENI_INIT_CFG_REVISION); TZ preloads
+  // SE firmware and XPU-locks the init config registers on QUPv3 UART SEs.
   RegWrite32 (Uart + 0x028, RegRead32 (Uart + 0x028) | 0x7FU);
-  RegWrite32 (Uart + 0x020, 0x1U);
+  RegWrite32 (Uart + 0xE30, RegRead32 (Uart + 0xE30) | 0x0FU);
   RegWrite32 (Uart + 0x024, 0x7FU);
+  RegWrite32 (Uart + 0x020, 0x1U);
   RegWrite32 (Uart + 0x258, 0x0U);
   RegWrite32 (Uart + 0xE18, 0x0U);
+  RegWrite32 (Uart + 0x618, 0xFFFFFFFFU);
+  RegWrite32 (Uart + 0x648, 0xFFFFFFFFU);
+  RegWrite32 (Uart + 0xC44, 0xFFFFFFFFU);
+  RegWrite32 (Uart + 0xD44, 0xFFFFFFFFU);
+  RegWrite32 (Uart + 0xE1C, 0xFFFFFFFFU);
+
+  RxFifoDepth = (RegRead32 (Uart + 0xE28) >> 16) & 0x3FU;
+  RegWrite32 (Uart + 0x80C, 0x2U);
+  RegWrite32 (Uart + 0x810, 0x2U);
+  RegWrite32 (Uart + 0x814, (RxFifoDepth > 2U) ? (RxFifoDepth - 2U) : 0x2U);
+  RegWrite32 (Uart + 0x614, 0xBFFE007FU);
+  RegWrite32 (Uart + 0x644, 0x0FC03F3FU);
+
   RegWrite32 (Uart + 0x260, 0x0004380EU);
   RegWrite32 (Uart + 0x264, 0x000C3E0EU);
   RegWrite32 (Uart + 0x284, 0x0004380EU);
@@ -448,6 +579,7 @@ GeniUartInit (
   RegWrite32 (Uart + 0x07C, 0x0U);
   RegWrite32 (Uart + 0x048, 0x41U);
   RegWrite32 (Uart + 0x04C, 0x41U);
+  RegWrite32 (Uart + 0x22C, 0x0U);
   RegWrite32 (Uart + 0x25C, 0x2U);
   RegWrite32 (Uart + 0x268, 0x8U);
   RegWrite32 (Uart + 0x26C, 0x0U);
@@ -713,7 +845,7 @@ PollGamepad (
     PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
     PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_LOW);
     Keys->PadStep       = 1;
-    Keys->PadNextMs     = Now + 80;
+    Keys->PadNextMs     = Now + 100;
     Keys->PadLastPollMs = Now;
     return;
   }
@@ -723,11 +855,11 @@ PollGamepad (
   }
 
   // If a synchronous command (such as scanning filesystems in FillEntries)
-  // blocked the main loop for > 80 ms, the 64-byte hardware RX FIFO may have
+  // blocked the main loop for > 500 ms, the 64-byte hardware RX FIFO may have
   // filled and truncated a status frame. Drain and discard stale bytes so the
   // next fresh MCU status frame parses cleanly without re-triggering.
   if (Keys->PadActive && Keys->PadLastPollMs != 0 &&
-      Now > Keys->PadLastPollMs && Now - Keys->PadLastPollMs > 80) {
+      Now > Keys->PadLastPollMs && Now - Keys->PadLastPollMs > 500) {
     GeniUartDrainRx (Keys);
     Keys->PadRxLen = 0;
   }
@@ -742,6 +874,7 @@ PollGamepad (
       PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_HIGH);
       PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_HIGH);
       Keys->PadRxLen  = 0;
+      Keys->PadSeq    = 0;
       Keys->PadStep   = Keys->PadConfig.IsRetroid8250 ? 10 : 2;
       Keys->PadNextMs = Now + (Keys->PadConfig.IsRetroid8250 ? 150 : 200);
     }
@@ -757,22 +890,8 @@ PollGamepad (
   case 3:
     if (SawVersion || Keys->PadActive || Now >= Keys->PadNextMs) {
       PadSendCmd (Keys, 0x01, CmdPar, sizeof (CmdPar));
-      Keys->PadStep   = 4;
-      Keys->PadNextMs = Now + 400;
-    }
-    break;
-  case 4:
-    if (Keys->PadActive) {
-      Keys->PadStep = 20;
-    } else if (Now >= Keys->PadNextMs) {
-      if (++Keys->PadAttempts < 3) {
-        PadGpioOut (Keys->PadConfig.EnGpio, TLMM_GPIO_LOW);
-        PadGpioOut (Keys->PadConfig.RstGpio, TLMM_GPIO_LOW);
-        Keys->PadStep   = 1;
-        Keys->PadNextMs = Now + 80;
-      } else {
-        Keys->PadStep = 99;
-      }
+      Keys->PadActive = TRUE;
+      Keys->PadStep   = 20;
     }
     break;
   case 10:
@@ -813,8 +932,8 @@ PollGamepad (
   case 15:
     if (Now >= Keys->PadNextMs) {
       PadSendCmd (Keys, 0x01, CmdVer, sizeof (CmdVer));
-      Keys->PadStep   = 4;
-      Keys->PadNextMs = Now + 400;
+      Keys->PadActive = TRUE;
+      Keys->PadStep   = 20;
     }
     break;
   case 20:
@@ -873,6 +992,7 @@ InputKeysConfigureGamepad (
   Keys->PadFirstFrameSeen = FALSE;
   Keys->PadStep           = 0;
   Keys->PadAttempts       = 0;
+  Keys->PadSeq            = 0;
   Keys->PadRxLen          = 0;
   for (UINTN Index = 0; Index < 4; Index++) {
     Keys->PadLiveHeld[Index] = FALSE;
@@ -944,7 +1064,7 @@ ReadKey (OUT INPUT *Out)
   }
 }
 
-#define BTN_RELEASE_DEBOUNCE_MS 80ULL
+#define BTN_RELEASE_DEBOUNCE_MS 20ULL
 
 STATIC BOOLEAN
 PollLevelButton (
@@ -952,6 +1072,7 @@ PollLevelButton (
   IN BOOLEAN        Held,
   IN INPUT          Key,
   IN UINT64         Now,
+  IN UINT64         DebounceMs,
   OUT INPUT        *Out
 )
 {
@@ -959,9 +1080,13 @@ PollLevelButton (
 
   if (Btn->HeldAtStart) {
     if (!Held) {
-      if (Btn->ReleaseMs == 0) {
+      if (DebounceMs == 0) {
+        Btn->HeldAtStart = FALSE;
+        Btn->PrevHeld    = FALSE;
+        Btn->ReleaseMs   = 0;
+      } else if (Btn->ReleaseMs == 0) {
         Btn->ReleaseMs = Tick;
-      } else if (Tick - Btn->ReleaseMs >= BTN_RELEASE_DEBOUNCE_MS) {
+      } else if (Tick - Btn->ReleaseMs >= DebounceMs) {
         Btn->HeldAtStart = FALSE;
         Btn->PrevHeld    = FALSE;
         Btn->ReleaseMs   = 0;
@@ -992,9 +1117,12 @@ PollLevelButton (
   }
 
   if (Btn->PrevHeld) {
-    if (Btn->ReleaseMs == 0) {
+    if (DebounceMs == 0) {
+      Btn->PrevHeld  = FALSE;
+      Btn->ReleaseMs = 0;
+    } else if (Btn->ReleaseMs == 0) {
       Btn->ReleaseMs = Tick;
-    } else if (Tick - Btn->ReleaseMs >= BTN_RELEASE_DEBOUNCE_MS) {
+    } else if (Tick - Btn->ReleaseMs >= DebounceMs) {
       Btn->PrevHeld  = FALSE;
       Btn->ReleaseMs = 0;
     }
@@ -1056,7 +1184,8 @@ InputKeysPoll (
   }
   for (UINTN Index = 0; Index < 3; Index++) {
     if (PollLevelButton (
-          &Keys->HwBtn[Index], Hw[Index], HwMap[Index], Now, &Decoded
+          &Keys->HwBtn[Index], Hw[Index], HwMap[Index], Now,
+          BTN_RELEASE_DEBOUNCE_MS, &Decoded
         )) {
       (VOID)VecPush (Out, Decoded);
     }
@@ -1064,7 +1193,7 @@ InputKeysPoll (
   PollGamepad (Keys, Now, Pad);
   for (UINTN Index = 0; Index < 4; Index++) {
     if (PollLevelButton (
-          &Keys->PadBtn[Index], Pad[Index], PadMap[Index], Now, &Decoded
+          &Keys->PadBtn[Index], Pad[Index], PadMap[Index], Now, 0, &Decoded
         )) {
       (VOID)VecPush (Out, Decoded);
     }
